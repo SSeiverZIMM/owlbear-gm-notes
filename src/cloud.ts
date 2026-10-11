@@ -44,6 +44,7 @@ function load(): Promise<Impl> {
     loading = Promise.all([import("./cloudSync"), import("./templateSync")]).then(([sync, templateSync]) => {
       const loaded: Impl = { ...sync, ...templateSync };
       if (context) loaded.initCloudSyncContext(...context);
+      loaded.setSharedKey(sharedKey);
       statusListeners.forEach((cb) => loaded.onSyncStatusChange(cb));
       loaded.onAuthChange((user) => {
         rememberSignIn(user);
@@ -107,8 +108,45 @@ export async function deleteNoteFromCloud(noteId: string): Promise<void> {
 export async function flushCloudSync(): Promise<void> {
   if (impl) await impl.flushCloudSync();
 }
-export function watchCloudNotes(roomId: string, onChange: (notes: Note[], removedIds: string[]) => void): () => void {
-  return impl ? impl.watchCloudNotes(roomId, onChange) : () => {};
+export function watchCloudNotes(
+  roomId: string,
+  onChange: (notes: Note[], removedIds: string[]) => void,
+  onFirstSync?: () => void
+): () => void {
+  return impl ? impl.watchCloudNotes(roomId, onChange, onFirstSync) : () => {};
+}
+
+// Public notes (see cloudSync.ts): all of it needs a signed-in account, so Firebase is there already.
+let sharedKey: string | null = null;
+export function setSharedKey(key: string | null) {
+  sharedKey = key;
+  impl?.setSharedKey(key);
+}
+export async function publishNote(note: Note): Promise<void> {
+  if (!impl) throw new Error("Notes: cloud sync isn't loaded");
+  await impl.publishNote(note);
+}
+export async function unpublishNote(noteId: string): Promise<void> {
+  if (impl) await impl.unpublishNote(noteId);
+}
+/** Loads Firebase (players have no other reason to) and follows the room's public notes. */
+export function watchSharedNotes(key: string, onChange: (notes: Note[]) => void, onError: (err: unknown) => void): () => void {
+  if (!cloudSyncAvailable()) return () => {};
+  let stopped = false;
+  let stop: (() => void) | null = null;
+  load().then(
+    (loaded) => {
+      if (!stopped) stop = loaded.watchSharedNotes(key, onChange, onError);
+    },
+    onError
+  );
+  return () => {
+    stopped = true;
+    stop?.();
+  };
+}
+export async function reconcileSharedNotes(key: string, wanted: () => Note[]): Promise<void> {
+  if (impl) await impl.reconcileSharedNotes(key, wanted);
 }
 
 export async function pushTemplate(template: Template): Promise<void> {

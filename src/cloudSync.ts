@@ -16,6 +16,9 @@ import {
   deleteDoc,
   collection,
   onSnapshot,
+  getDocs,
+  query,
+  where,
   type Firestore,
 } from "firebase/firestore";
 import { firebaseConfig, hasFirebaseConfig } from "./firebaseConfig";
@@ -125,6 +128,115 @@ export function initCloudSyncContext(roomId: string, lookup: (id: string) => Not
   getNoteById = lookup;
 }
 
+// ---------- public notes: shared/{key}/notes/{noteId}, readable by anyone with the room's key ----------
+// A public note gets a second copy there (see publicKey.ts for the key), tagged with its author's
+// uid: the Security Rules let only that account change or delete it, so several GMs in one room each
+// manage their own. Edits reach it on the same debounce as the private copy; publishing and
+// unpublishing go straight away.
+let sharedKey: string | null = null;
+export function setSharedKey(key: string | null) {
+  sharedKey = key;
+}
+
+function sharedNoteDoc(key: string, noteId: string) {
+  return doc(db!, "shared", key, "notes", noteId);
+}
+function sharedNoteData(note: Note, uid: string) {
+  return { title: note.title, html: note.html, updatedAt: note.updatedAt, owner: uid };
+}
+// The version of each public copy last written from here ("key/noteId" → updatedAt): the flush that
+// follows a publish finds it already up and skips it.
+const sharedVersions = new Map<string, number>();
+async function writeSharedNote(key: string, note: Note, uid: string) {
+  await setDoc(sharedNoteDoc(key, note.id), sharedNoteData(note, uid));
+  sharedVersions.set(key + "/" + note.id, note.updatedAt);
+}
+
+/** Puts (or refreshes) a note's public copy. Rejects when it can't: nobody signed in, no key. */
+export async function publishNote(note: Note): Promise<void> {
+  const init = ensureInitialized();
+  const user = init ? init.auth.currentUser : null;
+  if (!init || !user || !sharedKey) throw new Error("Notes: can't publish without an account and a key");
+  await writeSharedNote(sharedKey, note, user.uid);
+}
+
+/** Takes a note's public copy down. Only for a note that has one: deleting a missing document is
+ * refused by the rules (there's no owner to check). */
+export async function unpublishNote(noteId: string): Promise<void> {
+  const init = ensureInitialized();
+  const user = init ? init.auth.currentUser : null;
+  if (!init || !user || !sharedKey) return;
+  sharedVersions.delete(sharedKey + "/" + noteId);
+  try {
+    await deleteDoc(sharedNoteDoc(sharedKey, noteId));
+  } catch (err) {
+    console.error("Notes: failed to unpublish note", noteId, err);
+    setStatus("error");
+  }
+}
+
+/** A player's live view of the room's public notes: every note under `key`, whole, on each change.
+ * No account needed. */
+export function watchSharedNotes(key: string, onChange: (notes: Note[]) => void, onError: (err: unknown) => void): () => void {
+  const init = ensureInitialized();
+  if (!init) {
+    onError(new Error("Notes: Firebase isn't configured"));
+    return () => {};
+  }
+  return onSnapshot(
+    collection(init.db, "shared", key, "notes"),
+    (snapshot) => {
+      onChange(
+        snapshot.docs.map((d) => {
+          const data = d.data() as { title?: unknown; html?: unknown; updatedAt?: unknown };
+          return {
+            id: d.id,
+            title: typeof data.title === "string" ? data.title : "",
+            html: typeof data.html === "string" ? sanitizeNoteHtml(data.html) : "",
+            updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : 0,
+            public: true,
+          };
+        })
+      );
+    },
+    onError
+  );
+}
+
+/** Makes this account's public copies under `key` exactly `wanted()`: removes the ones no longer
+ * public (unpublished or deleted while signed out, or every one under a key that's been replaced),
+ * and writes the ones missing or older than here. `wanted` is read once the copies are fetched, so a
+ * note published meanwhile counts. */
+export async function reconcileSharedNotes(key: string, wanted: () => Note[]): Promise<void> {
+  const init = ensureInitialized();
+  const user = init ? init.auth.currentUser : null;
+  if (!init || !user) return;
+  try {
+    const snapshot = await getDocs(query(collection(init.db, "shared", key, "notes"), where("owner", "==", user.uid)));
+    const remote = new Map<string, number>();
+    snapshot.forEach((d) => {
+      const updatedAt = d.data().updatedAt;
+      remote.set(d.id, typeof updatedAt === "number" ? updatedAt : 0);
+    });
+    const notes = wanted();
+    const wantedIds = new Set(notes.map((n) => n.id));
+    await Promise.all([
+      ...Array.from(remote.keys())
+        .filter((id) => !wantedIds.has(id))
+        .map((id) => {
+          sharedVersions.delete(key + "/" + id);
+          return deleteDoc(sharedNoteDoc(key, id));
+        }),
+      ...notes
+        .filter((n) => (remote.get(n.id) ?? -1) < n.updatedAt)
+        .map((n) => writeSharedNote(key, n, user.uid)),
+    ]);
+  } catch (err) {
+    console.error("Notes: failed to bring public notes up to date", err);
+    setStatus("error");
+  }
+}
+
 export function markNoteDirty(noteId: string) {
   if (!cloudSyncAvailable() || !getCurrentUser()) return;
   dirtyIds.add(noteId);
@@ -151,11 +263,17 @@ export async function flushCloudSync(): Promise<void> {
         // Deleted locally between markNoteDirty() and this flush — deleteNoteFromCloud() already
         // handles removing it from Firestore directly, so there's nothing to push for this id.
         if (!note) return Promise.resolve();
-        return setDoc(roomNoteDoc(user.uid, currentRoomId!, id), {
-          title: note.title,
-          html: note.html,
-          updatedAt: note.updatedAt,
-        });
+        return Promise.all([
+          setDoc(roomNoteDoc(user.uid, currentRoomId!, id), {
+            title: note.title,
+            html: note.html,
+            updatedAt: note.updatedAt,
+            public: !!note.public,
+          }),
+          note.public && sharedKey && sharedVersions.get(sharedKey + "/" + id) !== note.updatedAt
+            ? writeSharedNote(sharedKey, note, user.uid)
+            : null,
+        ]);
       })
     );
     setStatus("synced");
@@ -182,13 +300,17 @@ export async function deleteNoteFromCloud(noteId: string): Promise<void> {
 // immediately with whatever's already there (covers "just signed in" / "just opened on this device"),
 // then again on every remote change — the closest thing to real-time sync this app does, and it comes
 // for free from Firestore's own listener rather than any polling of ours.
+// `onFirstSync` runs once, after the first batch has gone through `onChange` (empty or not): from then
+// on this device has everything the account has.
 export function watchCloudNotes(
   roomId: string,
-  onChange: (notes: Note[], removedIds: string[]) => void
+  onChange: (notes: Note[], removedIds: string[]) => void,
+  onFirstSync?: () => void
 ): () => void {
   const init = ensureInitialized();
   const user = init ? init.auth.currentUser : null;
   if (!init || !user) return () => {};
+  let first = true;
   return onSnapshot(
     roomNotesCollection(user.uid, roomId),
     (snapshot) => {
@@ -198,16 +320,21 @@ export function watchCloudNotes(
         if (change.type === "removed") {
           removedIds.push(change.doc.id);
         } else {
-          const data = change.doc.data() as { title?: unknown; html?: unknown; updatedAt?: unknown };
+          const data = change.doc.data() as { title?: unknown; html?: unknown; updatedAt?: unknown; public?: unknown };
           notes.push({
             id: change.doc.id,
             title: typeof data.title === "string" ? data.title : "",
             html: typeof data.html === "string" ? sanitizeNoteHtml(data.html) : "",
             updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : Date.now(),
+            ...(data.public === true ? { public: true } : {}),
           });
         }
       });
       if (notes.length || removedIds.length) onChange(notes, removedIds);
+      if (first) {
+        first = false;
+        onFirstSync?.();
+      }
     },
     (err) => {
       console.error("Notes: cloud listener error", err);

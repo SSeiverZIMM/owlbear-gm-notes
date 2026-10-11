@@ -1,6 +1,6 @@
 ---
 title: GM Notes
-description: Keep your prep, secrets and stat blocks one click away — a GM-only journal with tables, folding sections and templates.
+description: Keep your prep, secrets and stat blocks one click away — a GM journal with tables, folding sections, templates, and notes you can share with players.
 author: Ignacio Pedraza
 image: https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/header.png
 icon: https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/public/logo.svg
@@ -12,9 +12,9 @@ learn-more: https://github.com/nachoijp/owlbear-gm-notes#readme
 
 # GM Notes
 
-A rich-text note-taking panel for the GM only. Players who open it see a
-simple access-restricted screen — there's no sharing, no per-note
-visibility toggle, nothing for them to see or edit.
+A rich-text note-taking panel for the GM. Your notes stay private unless
+you choose to share one: players who open GM Notes see only the notes
+you made public, read-only.
 
 ![GM Notes](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/header.png)
 
@@ -63,6 +63,15 @@ and can be renamed or deleted from the **+** menu.
 
 ![Starting a note from a template](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-templates.png)
 
+## Sharing notes with players
+
+Signed in, open a note and click the **GM Notes** pill to share it. After
+you confirm, the pill turns green and reads **Public**. Players then see
+that note when they open GM Notes. They can read, search and fold it, but
+not edit it, and your changes reach them live. Click the pill again to
+stop sharing. If someone no longer in the room might still have access,
+**Regenerate key** in Settings cuts them off.
+
 ## Notes live on your device — with optional cloud sync
 
 Each note stays on the device you wrote it on. To bring a note somewhere
@@ -73,7 +82,8 @@ you want. Exporting all your notes includes your templates too.
 
 Want your notes and templates on more than one device automatically?
 Sign in with Google from Settings — that's the only setup needed. It's entirely
-optional, and only you can see your own notes.
+optional, and only you can see your own notes, except the ones you make
+public.
 
 ![Settings, backup, and storage stats](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-settings.png)
 

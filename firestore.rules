@@ -1,0 +1,31 @@
+// Firestore Security Rules for GM Notes' cloud features (Firebase project "gm-notes-sync").
+// Kept here for reference: they take effect only once pasted into the Firebase console
+// (Firestore → Rules) and published.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // A GM's own notes (cloud sync), per room: only that account.
+    match /users/{uid}/rooms/{roomId}/notes/{noteId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    // A GM's own templates (cloud sync), shared by all their rooms: only that account.
+    match /users/{uid}/templates/{templateId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    // Public notes: readable (and listable) by anyone who knows the room's key, which is kept in the
+    // room's metadata, so only people in the room have it. Nothing matches /shared itself, so the
+    // keys can't be listed. Each copy belongs to the account that published it: only that account
+    // can change or delete it, and it can't hand it to another.
+    match /shared/{key}/notes/{noteId} {
+      allow read: if key.size() >= 24;
+      allow create: if request.auth != null
+                    && key.size() >= 24
+                    && request.resource.data.owner == request.auth.uid;
+      allow update: if request.auth != null
+                    && resource.data.owner == request.auth.uid
+                    && request.resource.data.owner == request.auth.uid;
+      allow delete: if request.auth != null
+                    && resource.data.owner == request.auth.uid;
+    }
+  }
+}

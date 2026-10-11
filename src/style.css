@@ -66,8 +66,14 @@ body{
   font-family:var(--font-ui); font-size:10px; font-weight:700; letter-spacing:.04em;
   color:var(--primary-contrast); background:var(--primary-main); border:0;
   padding:4px 9px; border-radius:100px; white-space:nowrap; flex:0 0 auto;
-  align-self:center;
+  align-self:center; cursor:default; transition:filter .1s ease, box-shadow .1s ease;
 }
+/* Shared: white on this green is ~5:1 in both themes. */
+.brand-pill.public{ background:#23804a; color:#fff; }
+.brand-pill.clickable{ cursor:pointer; }
+.brand-pill.clickable:hover{ filter:brightness(1.15); box-shadow:0 0 0 2px color-mix(in srgb, currentColor 25%, transparent); }
+.brand-pill.clickable:focus-visible{ outline:2px solid var(--primary-main); outline-offset:2px; }
+.brand-pill.public.clickable:focus-visible{ outline-color:#23804a; }
 .panel-size-hint{
   position:absolute; right:12px; bottom:34px; z-index:20;
   font-family:var(--font-mono); font-size:10px; color:var(--text-primary);
@@ -143,6 +149,8 @@ body{
   background:var(--primary-main); border-radius:0 3px 3px 0;
 }
 .note-item-row{ display:flex; align-items:center; gap:4px; }
+.backup-row.stacked{ flex-direction:column; align-items:stretch; }
+.public-dot{ flex:0 0 auto; width:7px; height:7px; border-radius:50%; background:#2fa35f; }
 .note-item.with-actions{ flex-direction:row; align-items:center; gap:6px; }
 .note-item-body{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:2px; }
 .row-actions{ flex:0 0 auto; display:grid; grid-template-columns:repeat(2, 24px); gap:2px; }
@@ -271,6 +279,14 @@ body{
   font-family:var(--font-ui); font-weight:700; font-size:16.5px; color:var(--text-primary);
 }
 .note-title-input::placeholder{ color:var(--text-disabled); }
+.note-title-text{
+  font-family:var(--font-ui); font-weight:700; font-size:16.5px; color:var(--text-primary);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+
+/* Player view: read the public notes, nothing else (see applyRoleView). */
+.panel.player-view .new-note-wrap{ display:none; }
+.panel.player-view .settings-section:not(.player-ok){ display:none; }
 
 .editor-scroll{ flex:1; overflow-y:auto; background:transparent; position:relative; }
 .editor-surface{

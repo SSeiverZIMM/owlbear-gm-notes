@@ -118,6 +118,28 @@ export interface Strings {
   templatesFolder: string;
   clearAllBtn: string;
   clearAllConfirm: (n: number) => string;
+  brandPublic: string;
+  publishTitle: string;
+  unpublishTitle: string;
+  publishSignedOutTitle: string;
+  publishConfirmTitle: string;
+  publishConfirmHint: string;
+  publishConfirmBtn: string;
+  publishCancelBtn: string;
+  publishError: string;
+  publicDotTitle: string;
+  settingsSharedLabel: string;
+  sharedKeyHint: string;
+  regenerateKeyBtn: string;
+  regenerateKeyConfirm: string;
+  regenerateKeyError: string;
+  signOutPublicTitle: string;
+  signOutPublicHint: (n: number) => string;
+  signOutUnpublishBtn: (n: number) => string;
+  signOutKeepBtn: (n: number) => string;
+  sharedLoading: string;
+  sharedEmpty: string;
+  sharedLoadError: string;
   exportFormatTitle: string;
   exportFormatHint: string;
   exportFormatJsonBtn: string;
@@ -201,6 +223,28 @@ const STRINGS: Record<Language, Strings> = {
     templatesFolder: "plantillas",
     clearAllBtn: "Borrar todas las notas",
     clearAllConfirm: (n) => `¿Borrar las ${n} nota(s) guardadas en este dispositivo para esta sala? Esta acción no se puede deshacer — exportalas antes si querés conservarlas.`,
+    brandPublic: "Público",
+    publishTitle: "Compartir esta nota con los jugadores",
+    unpublishTitle: "Compartida con los jugadores — clic para dejar de compartirla",
+    publishSignedOutTitle: "Para compartir notas con los jugadores, iniciá sesión en Configuración",
+    publishConfirmTitle: "¿Compartir esta nota?",
+    publishConfirmHint: "Todos los jugadores de la sala van a poder verla, pero no editarla. Lo que cambies después también lo van a ver.",
+    publishConfirmBtn: "Compartir",
+    publishCancelBtn: "Cancelar",
+    publishError: "No se pudo compartir la nota. Probá de nuevo.",
+    publicDotTitle: "Compartida con los jugadores",
+    settingsSharedLabel: "Notas compartidas",
+    sharedKeyHint: "Los jugadores ven las notas públicas gracias a una clave guardada en la sala. Si alguien que ya no está en la sala la conserva, regenerala: desde ese momento deja de verlas. Los que están en la sala no notan nada.",
+    regenerateKeyBtn: "Regenerar clave",
+    regenerateKeyConfirm: "¿Regenerar la clave de las notas compartidas? Quien tenga la clave vieja deja de ver las notas públicas.",
+    regenerateKeyError: "No se pudo regenerar la clave. Probá de nuevo.",
+    signOutPublicTitle: "Tenés notas públicas",
+    signOutPublicHint: (n) => `Sin sesión iniciada no se pueden actualizar ni despublicar: los jugadores van a seguir viendo ${n === 1 ? "tu nota pública tal como está" : `tus ${n} notas públicas tal como están`} ahora, hasta que vuelvas a iniciar sesión.`,
+    signOutUnpublishBtn: (n) => (n === 1 ? "Despublicarla y cerrar sesión" : "Despublicar todas y cerrar sesión"),
+    signOutKeepBtn: (n) => (n === 1 ? "Cerrar sesión y dejarla visible" : "Cerrar sesión y dejarlas visibles"),
+    sharedLoading: "Cargando las notas compartidas…",
+    sharedEmpty: "El GM todavía no compartió ninguna nota.",
+    sharedLoadError: "No se pudieron cargar las notas compartidas. Probá cerrar y volver a abrir GM Notes.",
     exportFormatTitle: "Formato de exportación",
     exportFormatHint: "Markdown es texto plano y legible — bueno para llevar una nota a otro lado. JSON conserva todo tal cual y es lo que espera Importar.",
     exportFormatJsonBtn: "JSON",
@@ -304,6 +348,28 @@ const STRINGS: Record<Language, Strings> = {
     templatesFolder: "templates",
     clearAllBtn: "Clear all notes",
     clearAllConfirm: (n) => `Delete the ${n} note(s) stored on this device for this room? This can't be undone — export them first if you want to keep them.`,
+    brandPublic: "Public",
+    publishTitle: "Share this note with the players",
+    unpublishTitle: "Shared with the players — click to stop sharing it",
+    publishSignedOutTitle: "To share notes with the players, sign in from Settings",
+    publishConfirmTitle: "Share this note?",
+    publishConfirmHint: "Every player in the room will be able to see it, but not edit it. They'll also see whatever you change afterwards.",
+    publishConfirmBtn: "Share",
+    publishCancelBtn: "Cancel",
+    publishError: "Couldn't share the note. Please try again.",
+    publicDotTitle: "Shared with the players",
+    settingsSharedLabel: "Shared notes",
+    sharedKeyHint: "Players see the public notes through a key stored in the room. If someone no longer in the room still has it, regenerate it: from then on they stop seeing them. Those in the room won't notice a thing.",
+    regenerateKeyBtn: "Regenerate key",
+    regenerateKeyConfirm: "Regenerate the shared notes key? Anyone holding the old key stops seeing the public notes.",
+    regenerateKeyError: "Couldn't regenerate the key. Please try again.",
+    signOutPublicTitle: "You have public notes",
+    signOutPublicHint: (n) => `Signed out, they can't be updated or unpublished: players will keep seeing ${n === 1 ? "your public note as it is" : `your ${n} public notes as they are`} now, until you sign in again.`,
+    signOutUnpublishBtn: (n) => (n === 1 ? "Unpublish it and sign out" : "Unpublish all and sign out"),
+    signOutKeepBtn: (n) => (n === 1 ? "Sign out and keep it visible" : "Sign out and keep them visible"),
+    sharedLoading: "Loading the shared notes…",
+    sharedEmpty: "The GM hasn't shared any notes yet.",
+    sharedLoadError: "Couldn't load the shared notes. Try closing GM Notes and opening it again.",
     exportFormatTitle: "Export format",
     exportFormatHint: "Markdown is plain, readable text — good for taking a note elsewhere. JSON keeps everything exactly as-is and is what Import expects back.",
     exportFormatJsonBtn: "JSON",

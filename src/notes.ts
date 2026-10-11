@@ -8,6 +8,8 @@ export interface Note {
   title: string;
   html: string;
   updatedAt: number;
+  /** Shared with the room's players (see sharedNotes in cloudSync.ts). Absent = private. */
+  public?: boolean;
 }
 
 // Notes used to live in OBR.room.setMetadata(), which shares a single 16kB budget across EVERY
@@ -43,6 +45,7 @@ export function sanitizeNote(value: unknown): Note | undefined {
     title: value.title,
     html: value.html,
     updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : Date.now(),
+    ...(value.public === true ? { public: true } : {}),
   };
 }
 

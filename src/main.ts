@@ -36,7 +36,13 @@ import {
   watchCloudTemplates,
   pushTemplate,
   deleteTemplateFromCloud,
+  setSharedKey,
+  watchSharedNotes,
+  publishNote,
+  unpublishNote,
+  reconcileSharedNotes,
 } from "./cloud";
+import { ensurePublicKey, getPublicKey, watchPublicKey, replacePublicKey } from "./publicKey";
 import type { User } from "firebase/auth";
 
 // ---------- state ----------
@@ -52,6 +58,13 @@ let searchTerm = "";
 let language: Language = "en";
 let accentPref: AccentPref = "auto";
 let role: "GM" | "PLAYER" = "GM";
+// The room's key for public notes (see publicKey.ts), null until some GM publishes the first one.
+let publicKey: string | null = null;
+// A player sees the room's public notes instead (read-only, live from Firestore), never `notes`:
+// those are this browser's own, and nothing here may write over them.
+let sharedNotes: Note[] = [];
+let sharedState: "loading" | "ready" | "error" = "loading";
+let playerActiveId: string | null = null;
 let setThemeAccent: (accent: AccentPref) => void = () => {};
 
 // The debounced per-keystroke save (see scheduleSave in buildNoteEditor) waits 400ms of idle typing
@@ -150,6 +163,8 @@ function updateCloudAccountUI(user: User | null) {
   signedInRow.hidden = !user;
   signedInActions.hidden = !user;
   emailEl.textContent = user?.email || "";
+  // Replacing the key moves this account's public copies, so it needs the account.
+  (document.getElementById("sharedKeySection") as HTMLElement).hidden = !user || role !== "GM";
 }
 
 // Clipboard format for copying WITHIN GM Notes with formatting intact. Pasting anything else stays
@@ -167,13 +182,20 @@ function relativeTime(ts: number): string {
   const d = Math.round(h / 24);
   return d + s.timeDay;
 }
+// Players get the public notes; without cloud sync they just get the gate (see applyRoleView).
+function isPlayerView(): boolean {
+  return role === "PLAYER" && cloudSyncAvailable();
+}
+function viewNotes(): Note[] {
+  return isPlayerView() ? sharedNotes : notes;
+}
 function getActive(): Note | undefined {
-  return notes.find((n) => n.id === activeId);
+  return isPlayerView() ? sharedNotes.find((n) => n.id === playerActiveId) : notes.find((n) => n.id === activeId);
 }
 function filteredNotes(): Note[] {
-  if (!searchTerm) return notes;
+  if (!searchTerm) return viewNotes();
   const q = searchTerm.toLowerCase();
-  return notes.filter((n) => n.title.toLowerCase().includes(q) || stripHtml(n.html).toLowerCase().includes(q));
+  return viewNotes().filter((n) => n.title.toLowerCase().includes(q) || stripHtml(n.html).toLowerCase().includes(q));
 }
 
 // ---------- static DOM refs ----------
@@ -187,7 +209,7 @@ const switcherCountEl = document.getElementById("switcherCount") as HTMLElement;
 // ---------- GM note list + switcher ----------
 function updateSwitcherHeader() {
   switcherTitleEl.textContent = strings().notesLabel;
-  switcherCountEl.textContent = String(notes.length);
+  switcherCountEl.textContent = String(viewNotes().length);
 }
 
 function renderList() {
@@ -195,8 +217,10 @@ function renderList() {
   updateSwitcherHeader();
   const s = strings();
 
+  const readOnly = isPlayerView();
   if (!list.length) {
-    noteListEl.innerHTML = `<div class="empty-list">${notes.length ? escapeHtml(s.emptySearch) : s.emptyList}</div>`;
+    const empty = viewNotes().length ? escapeHtml(s.emptySearch) : readOnly ? escapeHtml(sharedEmptyMessage()) : s.emptyList;
+    noteListEl.innerHTML = `<div class="empty-list">${empty}</div>`;
     return;
   }
 
@@ -206,7 +230,7 @@ function renderList() {
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .forEach((n) => {
       const item = document.createElement("div");
-      item.className = "note-item" + (n.id === activeId ? " active" : "");
+      item.className = "note-item" + (n.id === (readOnly ? playerActiveId : activeId) ? " active" : "");
       item.dataset.id = n.id;
 
       const row = document.createElement("div");
@@ -215,6 +239,16 @@ function renderList() {
       const title = document.createElement("span");
       title.className = "title";
       title.textContent = n.title || s.untitled;
+
+      // Players only ever see public notes: the dot would say nothing there.
+      if (n.public && !readOnly) {
+        const dot = document.createElement("span");
+        dot.className = "public-dot";
+        dot.title = s.publicDotTitle;
+        dot.setAttribute("role", "img");
+        dot.setAttribute("aria-label", s.publicDotTitle);
+        row.appendChild(dot);
+      }
 
       const templateBtn = document.createElement("button");
       templateBtn.className = "row-btn template-btn";
@@ -281,12 +315,15 @@ function renderList() {
       body.appendChild(snippet);
       body.appendChild(meta);
 
-      item.classList.add("with-actions");
       item.appendChild(body);
-      item.appendChild(actions);
+      if (!readOnly) {
+        item.classList.add("with-actions");
+        item.appendChild(actions);
+      }
 
       item.addEventListener("click", () => {
-        activeId = n.id;
+        if (readOnly) playerActiveId = n.id;
+        else activeId = n.id;
         renderList();
         renderEditor();
         closeDropdown();
@@ -325,15 +362,134 @@ function startRename(itemEl: HTMLElement, note: Note) {
 async function deleteNote(id: string) {
   const idx = notes.findIndex((n) => n.id === id);
   if (idx === -1) return;
-  notes.splice(idx, 1);
+  const [removed] = notes.splice(idx, 1);
   if (activeId === id) {
     activeId = notes.length ? notes[0].id : null;
   }
   void deleteNoteFromCloud(id);
+  if (removed.public) void unpublishNote(id);
   await persist();
   renderList();
   renderEditor();
 }
+
+// ---------- public notes: shared with the room's players (see cloudSync.ts, publicKey.ts) ----------
+function publicNotes(): Note[] {
+  return notes.filter((n) => n.public);
+}
+// Public copies are tied to their author's account by the Security Rules: only a signed-in GM writes
+// them.
+function canPublish(): boolean {
+  return role === "GM" && cloudSyncAvailable() && !!getCurrentUser();
+}
+// Catches the public copies up with what's here: anything changed, unpublished or deleted while
+// signed out (or before this device had pulled the account's notes) gets fixed now.
+function reconcilePublicNotes() {
+  if (canPublish() && publicKey) void reconcileSharedNotes(publicKey, publicNotes);
+}
+function applyPublicKey(key: string | null) {
+  if (key === publicKey) return;
+  const old = publicKey;
+  publicKey = key;
+  setSharedKey(key);
+  if (isPlayerView()) {
+    startSharedWatch();
+    renderList();
+    renderEditor();
+    return;
+  }
+  // The key was replaced (here or by another GM): this account's copies move to the new one.
+  if (old && canPublish()) void reconcileSharedNotes(old, () => []);
+  reconcilePublicNotes();
+}
+// By id: a cloud update can replace the note's object while this waits, so it's looked up again
+// after every await.
+async function setNotePublic(id: string, value: boolean) {
+  const find = () => notes.find((n) => n.id === id);
+  const note = find();
+  if (!note || value === !!note.public) return;
+  const updatedAt = Date.now();
+  // Before anything awaits: a reconcile running meanwhile counts the note as public instead of
+  // taking its fresh copy down, and the newer time keeps an older cloud version from replacing it.
+  if (value) note.public = true;
+  else delete note.public;
+  note.updatedAt = updatedAt;
+  if (value) {
+    try {
+      if (!publicKey) applyPublicKey(await ensurePublicKey());
+      const current = find();
+      if (!current) return;
+      await publishNote({ ...current, public: true, updatedAt });
+    } catch (err) {
+      console.error("Notes: failed to publish note", err);
+      const current = find();
+      if (current) delete current.public;
+      renderList();
+      updateBrandPill();
+      window.alert(strings().publishError);
+      return;
+    }
+  } else {
+    // Signed out, this does nothing yet: the copy comes down on the next sign-in (reconcilePublicNotes).
+    void unpublishNote(id);
+  }
+  const current = find();
+  if (!current) return;
+  if (value) current.public = true;
+  else delete current.public;
+  current.updatedAt = Math.max(current.updatedAt, updatedAt);
+  markNoteDirty(id);
+  await persist();
+  renderList();
+  updateBrandPill();
+}
+
+// The "GM Notes" pill doubles as the active note's share switch: "Public", in green, while shared.
+const brandPill = document.getElementById("brandPill") as HTMLButtonElement;
+function sharingAvailable(): boolean {
+  return role === "GM" && cloudSyncAvailable() && !!getActive();
+}
+function updateBrandPill() {
+  const s = strings();
+  const isPublic = isPlayerView() || !!getActive()?.public;
+  const sharing = sharingAvailable();
+  brandPill.textContent = isPublic ? s.brandPublic : "GM Notes";
+  brandPill.classList.toggle("public", isPublic);
+  brandPill.classList.toggle("clickable", sharing);
+  brandPill.tabIndex = sharing ? 0 : -1;
+  brandPill.title = !sharing ? "" : isPublic ? s.unpublishTitle : canPublish() ? s.publishTitle : s.publishSignedOutTitle;
+  if (sharing) brandPill.setAttribute("aria-pressed", String(isPublic));
+  else brandPill.removeAttribute("aria-pressed");
+}
+brandPill.addEventListener("click", () => {
+  const active = getActive();
+  if (!active || !sharingAvailable()) return;
+  if (active.public) void setNotePublic(active.id, false);
+  else if (!canPublish()) openSettings();
+  else openPublishConfirm(active);
+});
+
+// Publishing can't be taken back once a player has read it, so it asks first; unpublishing doesn't.
+const publishConfirmOverlay = document.getElementById("publishConfirmOverlay") as HTMLElement;
+let pendingPublish: string | null = null;
+function openPublishConfirm(note: Note) {
+  pendingPublish = note.id;
+  publishConfirmOverlay.hidden = false;
+  (document.getElementById("publishConfirmBtn") as HTMLButtonElement).focus();
+}
+function closePublishConfirm() {
+  pendingPublish = null;
+  publishConfirmOverlay.hidden = true;
+}
+document.getElementById("publishConfirmBackdrop")!.addEventListener("click", closePublishConfirm);
+document.getElementById("publishConfirmCloseBtn")!.addEventListener("click", closePublishConfirm);
+document.getElementById("publishCancelBtn")!.addEventListener("click", closePublishConfirm);
+document.getElementById("publishConfirmBtn")!.addEventListener("click", () => {
+  const id = pendingPublish;
+  closePublishConfirm();
+  // Deleted meanwhile (from another device, say): setNotePublic finds nothing to publish.
+  if (id) void setNotePublic(id, true);
+});
 
 async function createNote(template?: Template) {
   // A built-in's text is copied in the current language and stays that way in the note.
@@ -662,6 +818,7 @@ async function clearAllNotesWithConfirm() {
   if (!notes.length) return;
   if (!window.confirm(strings().clearAllConfirm(notes.length))) return;
   await Promise.all(notes.map((n) => deleteNoteFromCloud(n.id)));
+  publicNotes().forEach((n) => void unpublishNote(n.id));
   await clearAllNotes();
   notes = [];
   activeId = null;
@@ -1976,8 +2133,14 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   // pill's end INSIDE it stays a distinct spot (typing there extends the pill); → / ← step between
   // the two. The anchor's zero-width space is stripped as soon as real text lands next to it, or
   // the anchor removed entirely once the caret leaves it unused, so it never reaches a saved note.
+  // The leading edge has the same problem the other way round (Chrome resolves "before the pill's
+  // first character" to outside it), so it gets two anchors of its own: one as the pill's first
+  // child, for the spot inside it before its first character, and one right before the pill, for
+  // the spot outside it (which a pill starting its paragraph otherwise doesn't have either). Only
+  // one anchor exists at a time: `pillAnchorKind` says which.
   const PILL_ANCHOR = "\u200b";
   let pillAnchor: Text | null = null;
+  let pillAnchorKind: "after" | "before" | "start" = "after";
   // The editor's HTML minus purely view-side state, for anything saved or snapshotted: the caret
   // anchor's zero-width space and the data-folded markers applyFolding() puts on hidden blocks
   // (recomputed from each heading's data-collapsed whenever a note is shown, so never worth storing).
@@ -2012,11 +2175,70 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   function caretAfterPill(pill: HTMLElement) {
     let anchor = pill.nextSibling as Text | null;
     if (!(anchor && anchor === pillAnchor)) {
+      releasePillAnchor();
       anchor = document.createTextNode(PILL_ANCHOR);
       pill.after(anchor);
       pillAnchor = anchor;
+      pillAnchorKind = "after";
     }
     window.getSelection()!.collapse(anchor, anchor.data.indexOf(PILL_ANCHOR) + 1);
+  }
+  // Inside the pill, before its first character: the caret after an anchor that's the pill's first
+  // child, so typed text lands in the pill.
+  function caretAtPillStart(pill: HTMLElement) {
+    releasePillAnchor();
+    const anchor = document.createTextNode(PILL_ANCHOR);
+    pill.insertBefore(anchor, pill.firstChild);
+    pillAnchor = anchor;
+    pillAnchorKind = "start";
+    window.getSelection()!.collapse(anchor, 1);
+  }
+  // Outside the pill, just before it: the caret before an anchor right before the pill, so the
+  // anchor's zero-width space keeps it off the pill's edge and typed text lands outside.
+  function caretBeforePill(pill: HTMLElement) {
+    releasePillAnchor();
+    const anchor = document.createTextNode(PILL_ANCHOR);
+    pill.before(anchor);
+    pillAnchor = anchor;
+    pillAnchorKind = "before";
+    window.getSelection()!.collapse(anchor, 0);
+  }
+  // The pill the caret is on the anchor of, if it is (and which anchor).
+  function pillAtAnchor(): { pill: HTMLElement; kind: "after" | "before" | "start" } | null {
+    const sel = window.getSelection();
+    if (!pillAnchor || !sel || !sel.isCollapsed || sel.anchorNode !== pillAnchor) return null;
+    const pill =
+      pillAnchorKind === "after" ? pillAnchor.previousSibling
+        : pillAnchorKind === "before" ? pillAnchor.nextSibling
+          : pillAnchor.parentElement;
+    return isPillNode(pill) ? { pill, kind: pillAnchorKind } : null;
+  }
+  // The pill whose start the (collapsed) caret is at, from outside: the end of whatever precedes it
+  // (excluding our own anchors).
+  function pillStartingAtCaret(): HTMLElement | null {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !sel.isCollapsed) return null;
+    const r = sel.getRangeAt(0);
+    const node = r.startContainer;
+    if (!surface.contains(node) || node === pillAnchor) return null;
+    if (node.nodeType === 3 && r.startOffset === (node as Text).length && isPillNode(node.nextSibling)) return node.nextSibling;
+    if (node.nodeType === 1 && isPillNode(node.childNodes[r.startOffset])) return node.childNodes[r.startOffset] as HTMLElement;
+    return null;
+  }
+  // The pill the (collapsed) caret is inside of, right after its first character.
+  function pillAfterFirstCharAtCaret(): HTMLElement | null {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !sel.isCollapsed) return null;
+    const r = sel.getRangeAt(0);
+    const node = r.startContainer;
+    if (!surface.contains(node) || node === pillAnchor) return null;
+    const el = node.nodeType === 3 ? node.parentElement : (node as HTMLElement);
+    const pill = el && el.closest ? (el.closest(".note-pill") as HTMLElement | null) : null;
+    if (!pill || !surface.contains(pill)) return null;
+    const before = document.createRange();
+    before.setStart(pill, 0);
+    before.setEnd(node, r.startOffset);
+    return Array.from(before.toString().split(PILL_ANCHOR).join("")).length === 1 ? pill : null;
   }
   function caretAtPillEnd(pill: HTMLElement) {
     const r = document.createRange();
@@ -2229,15 +2451,22 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
       }
     }
     const plainArrow = !ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey;
+    // ← / → across a pill's edges stop at both sides of each: inside and outside (see PILL_ANCHOR).
     if (ev.key === "ArrowRight" && plainArrow) {
       const edge = pillEdgeAtCaret();
+      const at = pillAtAnchor();
+      const starting = at ? null : pillStartingAtCaret();
       if (edge && edge.inside) { ev.preventDefault(); caretAfterPill(edge.pill); updateToolbarState(); }
+      else if (at && at.kind === "before") { ev.preventDefault(); caretAtPillStart(at.pill); updateToolbarState(); }
+      else if (starting) { ev.preventDefault(); caretAtPillStart(starting); updateToolbarState(); }
       return;
     }
     if (ev.key === "ArrowLeft" && plainArrow) {
-      const sel = window.getSelection();
-      const prev = pillAnchor && pillAnchor.previousSibling;
-      if (sel && sel.anchorNode === pillAnchor && isPillNode(prev)) { ev.preventDefault(); caretAtPillEnd(prev); updateToolbarState(); }
+      const at = pillAtAnchor();
+      const afterFirst = at ? null : pillAfterFirstCharAtCaret();
+      if (at && at.kind === "after") { ev.preventDefault(); caretAtPillEnd(at.pill); updateToolbarState(); }
+      else if (at && at.kind === "start") { ev.preventDefault(); caretBeforePill(at.pill); updateToolbarState(); }
+      else if (afterFirst) { ev.preventDefault(); caretAtPillStart(afterFirst); updateToolbarState(); }
       return;
     }
     if (tables.handleTab(ev)) return;
@@ -2384,8 +2613,110 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
 }
 
 function renderEditor() {
+  updateBrandPill();
+  if (isPlayerView()) {
+    renderSharedNote();
+    return;
+  }
+  shownShared = null;
   const active = getActive();
   buildNoteEditor(editorPaneEl, "gm", active ? active.id : null, () => renderList());
+}
+
+// ---------- player view: the room's public notes, read-only ----------
+function sharedEmptyMessage(): string {
+  const s = strings();
+  return sharedState === "error" ? s.sharedLoadError : sharedState === "loading" ? s.sharedLoading : s.sharedEmpty;
+}
+let stopSharedWatch: (() => void) | null = null;
+function startSharedWatch() {
+  stopSharedWatch?.();
+  stopSharedWatch = null;
+  sharedNotes = [];
+  // No key: no GM has published anything in this room yet.
+  sharedState = publicKey ? "loading" : "ready";
+  if (publicKey) {
+    stopSharedWatch = watchSharedNotes(
+      publicKey,
+      (list) => {
+        sharedNotes = list;
+        sharedState = "ready";
+        if (!sharedNotes.some((n) => n.id === playerActiveId)) {
+          const newest = sharedNotes.slice().sort((a, b) => b.updatedAt - a.updatedAt)[0];
+          playerActiveId = newest ? newest.id : null;
+        }
+        renderList();
+        renderEditor();
+      },
+      (err) => {
+        console.error("Notes: failed to load the public notes", err);
+        sharedState = "error";
+        renderList();
+        renderEditor();
+      }
+    );
+  }
+}
+function stopSharedView() {
+  stopSharedWatch?.();
+  stopSharedWatch = null;
+  sharedNotes = [];
+  playerActiveId = null;
+}
+
+// What the viewer shows, so a live update that changed nothing visible (another note, say) doesn't
+// redraw it; and per note, the sections the player folded or unfolded, kept across the GM's edits.
+let shownShared: { id: string; title: string; html: string; language: Language } | null = null;
+const playerFolds = new Map<string, Map<string, boolean>>();
+function headingKeys(surface: HTMLElement): [HTMLElement, string][] {
+  const seen = new Map<string, number>();
+  return (Array.prototype.slice.call(surface.querySelectorAll(":scope > h1, :scope > h2, :scope > h3, :scope > h4")) as HTMLElement[]).map((h) => {
+    const base = h.tagName + "|" + (h.textContent || "");
+    const n = (seen.get(base) || 0) + 1;
+    seen.set(base, n);
+    return [h, base + "|" + n];
+  });
+}
+function renderSharedNote() {
+  const s = strings();
+  const note = getActive();
+  if (!note) {
+    shownShared = null;
+    editorPaneEl.innerHTML = `<div class="editor-empty">${escapeHtml(sharedEmptyMessage())}</div>`;
+    return;
+  }
+  if (shownShared && shownShared.id === note.id && shownShared.title === note.title && shownShared.html === note.html && shownShared.language === language) return;
+  const prevScroll = shownShared && shownShared.id === note.id ? editorPaneEl.querySelector(".editor-scroll")?.scrollTop ?? 0 : 0;
+  editorPaneEl.innerHTML =
+    `<div class="title-row"><div class="note-title-text"></div></div>` +
+    `<div class="editor-scroll"><div class="editor-surface read-only"></div></div>`;
+  editorPaneEl.querySelector(".note-title-text")!.textContent = note.title || s.untitled;
+  const surface = editorPaneEl.querySelector(".editor-surface") as HTMLElement;
+  // Already sanitized on arrival (watchSharedNotes).
+  surface.innerHTML = note.html;
+  const folds = playerFolds.get(note.id);
+  if (folds) {
+    headingKeys(surface).forEach(([h, key]) => {
+      const collapsed = folds.get(key);
+      if (collapsed === true) h.setAttribute("data-collapsed", "");
+      else if (collapsed === false) h.removeAttribute("data-collapsed");
+    });
+  }
+  const sections = createSections({
+    surface,
+    blockAt: (node) => {
+      let el = node.nodeType === 3 ? node.parentElement : (node as HTMLElement);
+      if (!el || el === surface || !surface.contains(el)) return null;
+      while (el.parentElement && el.parentElement !== surface) el = el.parentElement;
+      return el;
+    },
+    onFoldChange: () => {
+      playerFolds.set(note.id, new Map(headingKeys(surface).map(([h, key]) => [key, h.hasAttribute("data-collapsed")])));
+    },
+  });
+  sections.applyFolding();
+  editorPaneEl.querySelector(".editor-scroll")!.scrollTop = prevScroll;
+  shownShared = { id: note.id, title: note.title, html: note.html, language };
 }
 
 // ---------- GM note switcher dropdown ----------
@@ -2511,7 +2842,9 @@ document.getElementById("exportFormatMdBtn")!.addEventListener("click", () => ch
 
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "Escape") return;
-  if (!exportFormatOverlay.hidden) closeExportFormatModal();
+  if (!publishConfirmOverlay.hidden) closePublishConfirm();
+  else if (!signOutOverlay.hidden) closeSignOutConfirm();
+  else if (!exportFormatOverlay.hidden) closeExportFormatModal();
   else if (!settingsOverlay.hidden) closeSettings();
 });
 
@@ -2532,7 +2865,61 @@ document.getElementById("cloudSignInBtn")!.addEventListener("click", () => {
     window.alert(strings().cloudSignInError);
   });
 });
-document.getElementById("cloudSignOutBtn")!.addEventListener("click", () => void signOutCloud());
+// Signed out, public notes can't be updated or taken down: with any shared, signing out asks first
+// whether to unpublish them all, after sending what's still pending so they stay at their latest.
+const signOutOverlay = document.getElementById("signOutOverlay") as HTMLElement;
+function closeSignOutConfirm() {
+  signOutOverlay.hidden = true;
+}
+document.getElementById("cloudSignOutBtn")!.addEventListener("click", async () => {
+  const shared = publicNotes();
+  if (!shared.length || !canPublish()) {
+    void signOutCloud();
+    return;
+  }
+  await flushCloudSync();
+  const s = strings();
+  document.getElementById("signOutHint")!.textContent = s.signOutPublicHint(shared.length);
+  document.getElementById("signOutUnpublishBtn")!.textContent = s.signOutUnpublishBtn(shared.length);
+  document.getElementById("signOutKeepBtn")!.textContent = s.signOutKeepBtn(shared.length);
+  signOutOverlay.hidden = false;
+});
+document.getElementById("signOutBackdrop")!.addEventListener("click", closeSignOutConfirm);
+document.getElementById("signOutCloseBtn")!.addEventListener("click", closeSignOutConfirm);
+document.getElementById("signOutKeepBtn")!.addEventListener("click", () => {
+  closeSignOutConfirm();
+  void signOutCloud();
+});
+document.getElementById("signOutUnpublishBtn")!.addEventListener("click", async () => {
+  closeSignOutConfirm();
+  const shared = publicNotes();
+  const updatedAt = Date.now();
+  shared.forEach((n) => {
+    delete n.public;
+    n.updatedAt = updatedAt;
+    markNoteDirty(n.id);
+  });
+  await Promise.all(shared.map((n) => unpublishNote(n.id)));
+  // The account's own copies must say "private" too before signing out, or another of the GM's
+  // devices would publish them again.
+  await flushCloudSync();
+  await persist();
+  renderList();
+  updateBrandPill();
+  void signOutCloud();
+});
+
+// A new key for the room: whoever kept the old one (someone no longer in the room) stops seeing the
+// public notes; everyone in the room picks up the new one and keeps seeing them.
+document.getElementById("regenerateKeyBtn")!.addEventListener("click", async () => {
+  if (!canPublish() || !window.confirm(strings().regenerateKeyConfirm)) return;
+  try {
+    applyPublicKey(await replacePublicKey());
+  } catch (err) {
+    console.error("Notes: failed to replace the room's public key", err);
+    window.alert(strings().regenerateKeyError);
+  }
+});
 document.getElementById("cloudSyncNowBtn")!.addEventListener("click", () => void flushCloudSync());
 
 document.getElementById("settingsLangRow")!.addEventListener("click", (ev) => {
@@ -2547,6 +2934,14 @@ function applyLanguage() {
   document.documentElement.lang = language;
   const s = strings();
   searchInput.placeholder = s.searchPlaceholder;
+  updateBrandPill();
+  document.getElementById("publishConfirmTitle")!.textContent = s.publishConfirmTitle;
+  document.getElementById("publishConfirmHint")!.textContent = s.publishConfirmHint;
+  document.getElementById("publishConfirmBtn")!.textContent = s.publishConfirmBtn;
+  document.getElementById("publishCancelBtn")!.textContent = s.publishCancelBtn;
+  const publishConfirmCloseBtn = document.getElementById("publishConfirmCloseBtn")!;
+  publishConfirmCloseBtn.title = s.settingsClose;
+  publishConfirmCloseBtn.setAttribute("aria-label", s.settingsClose);
 
   const newNoteBtn = document.getElementById("newNoteBtn")!;
   newNoteBtn.title = s.newNoteTitle;
@@ -2581,6 +2976,13 @@ function applyLanguage() {
   document.getElementById("cloudSyncHint")!.textContent = s.cloudSyncHint;
   document.getElementById("cloudSignInBtn")!.textContent = s.cloudSignInBtn;
   document.getElementById("cloudSignOutBtn")!.textContent = s.cloudSignOutBtn;
+  document.getElementById("settingsSharedLabel")!.textContent = s.settingsSharedLabel;
+  document.getElementById("sharedKeyHint")!.textContent = s.sharedKeyHint;
+  document.getElementById("regenerateKeyBtn")!.textContent = s.regenerateKeyBtn;
+  document.getElementById("signOutTitle")!.textContent = s.signOutPublicTitle;
+  const signOutCloseBtn = document.getElementById("signOutCloseBtn")!;
+  signOutCloseBtn.title = s.settingsClose;
+  signOutCloseBtn.setAttribute("aria-label", s.settingsClose);
   document.getElementById("cloudSyncNowBtn")!.textContent = s.cloudSyncNowBtn;
   updateSyncIndicator();
   document.getElementById("exportFormatTitle")!.textContent = s.exportFormatTitle;
@@ -2699,13 +3101,27 @@ const sizeHint = document.getElementById("sizeHint")!;
 // ---------- role: this is a GM-only tool; players see a blocking gate instead ----------
 function applyRoleView() {
   const isPlayer = role === "PLAYER";
-  document.getElementById("normalView")!.hidden = isPlayer;
-  document.getElementById("gmGate")!.hidden = !isPlayer;
+  const playerView = isPlayerView();
+  // Without cloud sync there's nowhere for public notes to come from: players get the gate.
+  document.getElementById("normalView")!.hidden = isPlayer && !playerView;
+  document.getElementById("gmGate")!.hidden = !isPlayer || playerView;
+  panel.classList.toggle("player-view", playerView);
+  if (playerView) startSharedWatch();
+  else stopSharedView();
+  searchTerm = "";
+  searchInput.value = "";
+  renderList();
+  renderEditor();
   if (isPlayer) {
     closeDropdown();
     closeTemplateMenu();
     closeSettings();
+    closePublishConfirm();
+    closeSignOutConfirm();
   }
+  updateCloudAccountUI(getCurrentUser());
+  updateBrandPill();
+  reconcilePublicNotes();
 }
 
 // ---------- cloud sync: merging what Firestore has with what's local (see cloudSync.ts) ----------
@@ -2736,6 +3152,11 @@ function mergeCloudNotes(cloudNotes: Note[], removedIds: string[]) {
       notes[idx] = cloudNote;
       listChanged = true;
       if (activeId === cloudNote.id) activeNoteChanged = true;
+    } else if (cloudNote.updatedAt < notes[idx].updatedAt) {
+      // Changed here while signed out (or before the last push went through): the account's copy is
+      // behind, so it goes up now. Otherwise another device would keep the old version, and with it,
+      // say, a note still public that was unpublished here.
+      markNoteDirty(cloudNote.id);
     }
   });
   if (!listChanged) return;
@@ -2752,7 +3173,8 @@ function applyCloudAuthState(user: User | null) {
   stopTemplateWatch?.();
   stopTemplateWatch = null;
   if (user && currentRoomIdForCloud) {
-    stopCloudWatch = watchCloudNotes(currentRoomIdForCloud, mergeCloudNotes);
+    // Public copies wait for the account's notes: until then this device may be missing some.
+    stopCloudWatch = watchCloudNotes(currentRoomIdForCloud, mergeCloudNotes, reconcilePublicNotes);
   }
   if (user) {
     // Templates aren't per room, so they sync regardless of which room this is.
@@ -2767,6 +3189,7 @@ function applyCloudAuthState(user: User | null) {
   }
   updateCloudAccountUI(user);
   updateSyncIndicator();
+  updateBrandPill();
 }
 let currentRoomIdForCloud: string | null = null;
 
@@ -2779,6 +3202,12 @@ async function boot() {
     OBR.player.getRole(),
   ]);
   notes = initialNotes;
+  try {
+    publicKey = await getPublicKey();
+  } catch (err) {
+    console.error("Notes: failed to read the room's public key", err);
+  }
+  setSharedKey(publicKey);
   language = initialLanguage;
   accentPref = initialAccent;
   role = initialRole;
@@ -2800,6 +3229,8 @@ async function boot() {
     currentRoomIdForCloud = OBR.room.id;
     startCloudSync(currentRoomIdForCloud, (id) => notes.find((n) => n.id === id), updateSyncIndicator, applyCloudAuthState);
   }
+
+  watchPublicKey(applyPublicKey);
 
   OBR.player.onChange((player) => {
     if (player.role !== role) {

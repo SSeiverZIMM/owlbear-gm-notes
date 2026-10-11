@@ -1,7 +1,8 @@
 # GM Notes
 
 An [Owlbear Rodeo](https://www.owlbear.rodeo/) extension for a private,
-rich-text campaign journal — visible only to the GM.
+rich-text campaign journal for the GM, with the notes you choose shared
+read-only with your players.
 
 ![GM Notes](docs/header.png)
 
@@ -26,6 +27,9 @@ https://notes.ijpedraza.com/manifest.json
   and use toggles to tuck details away inside normal-looking text — see
   [Collapsible sections](#collapsible-sections) below.
 - Multiple notes per room, with search and a quick switcher.
+- **Share notes with players**: make any note public and players can read
+  it (but not edit it), live as you write. See
+  [Sharing notes with players](#sharing-notes-with-players) below.
 - **Templates**: start a note from a ready-made layout instead of a blank
   page — see [Templates](#templates) below.
 - **Copy and paste between notes** keeps all the formatting — pills, colors,
@@ -110,6 +114,30 @@ start with the right sections in place.
 
 ![Starting a note from a template](docs/screenshot-templates.png)
 
+## Sharing notes with players
+
+Any note can be shared with your players, read-only. Sharing needs you to
+be signed in (Settings → Cloud sync), since shared notes are stored in
+the cloud for players to read.
+
+- **Share a note**: open it and click the **GM Notes** pill at the top
+  left. After you confirm, the pill turns green and reads **Public**, and
+  the note gets a green dot in the notes list.
+- **What players see**: when a player opens GM Notes, they get the public
+  notes, and nothing else. They can pick and search them and fold their
+  sections, but not edit them: there's no toolbar and no **+** button.
+  In Settings they only get the language, the accent color, and the manual.
+- **Your edits reach them live**, within about 15 seconds.
+- **Stop sharing**: click the green **Public** pill again. Deleting a
+  shared note also takes it away from players.
+- **Regenerate key** (Settings → Shared notes): players read the public
+  notes through a key stored in the room. If someone no longer in the
+  room might still have it, regenerate it. From then on they stop seeing
+  anything, and everyone in the room carries on without noticing.
+- **Signing out** with public notes asks first whether to unpublish them.
+  Signed out, they can't be updated or unpublished, so players would keep
+  seeing them as they are until you sign in again.
+
 ## Notes live on your device — with optional cloud sync
 
 Each note is saved on the device you wrote it on. To bring a note
@@ -120,7 +148,8 @@ Want your notes and templates on more than one device automatically?
 Sign in with Google from Settings and they'll sync in the background — no setup
 beyond that one sign-in. It's entirely optional and only you can see
 your own notes; signing in doesn't share anything with players or other
-GMs.
+GMs. Only the notes you make public are shared, and only with the
+players in your room.
 
 Need this manual again? Settings → Help → View manual opens it in a new
 tab.
