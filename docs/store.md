@@ -69,8 +69,13 @@ Signed in, open a note and click the **GM Notes** pill to share it. After
 you confirm, the pill turns green and reads **Public**. Players then see
 that note when they open GM Notes. They can read, search and fold it, but
 not edit it, and your changes reach them live. Click the pill again to
-stop sharing. If someone no longer in the room might still have access,
+stop sharing. Parts you hide with the eye button never reach players:
+a hidden heading takes its whole section with it. If someone no longer in the room might still have access,
 **Regenerate key** in Settings cuts them off.
+
+![A shared note, as the GM sees it: a hidden part in its box](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-sharing-gm.png)
+
+![The same note, as players see it: the hidden part isn't there](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-sharing-player.png)
 
 ## Notes live on your device — with optional cloud sync
 

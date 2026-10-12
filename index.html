@@ -97,6 +97,14 @@
                 </div>
               </div>
               <div class="settings-section">
+                <span class="settings-section-label" id="settingsSecretLabel">Hidden parts</span>
+                <p class="cleanup-hint" id="secretEyeHint"></p>
+                <div class="settings-lang-row" id="secretEyeRow">
+                  <button type="button" class="opt-btn" data-eye="click" id="secretEyeClickBtn">Show on click</button>
+                  <button type="button" class="opt-btn" data-eye="locked" id="secretEyeLockBtn">Locked</button>
+                </div>
+              </div>
+              <div class="settings-section">
                 <span class="settings-section-label" id="settingsBackupLabel">Notes backup</span>
                 <p class="cleanup-hint" id="backupHint">Export notes to a file to free up space without losing them, and import them back whenever you want.</p>
                 <div class="backup-row">
@@ -142,6 +150,7 @@
             <div class="settings-modal-body">
               <div class="settings-section">
                 <p class="cleanup-hint" id="publishConfirmHint"></p>
+                <p class="cleanup-hint" id="publishConfirmSecret" hidden></p>
                 <div class="backup-row">
                   <button type="button" class="opt-btn is-active" id="publishConfirmBtn">Share</button>
                   <button type="button" class="opt-btn" id="publishCancelBtn">Cancel</button>

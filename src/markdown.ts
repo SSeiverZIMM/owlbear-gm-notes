@@ -1,6 +1,13 @@
 // Conversions between note HTML and plain text / Markdown: pasting, Markdown import/export, word
 // counts and search. Pure functions (no editor state).
 import { hasHeaderRow, textMatrix } from "./tableModel";
+import { SECRET_ATTR, compactSecret, secretCoverage } from "./secret";
+
+// Parts hidden from players (see secret.ts) go between these two lines in Markdown: HTML comments,
+// which Markdown viewers don't show. Exported in English; read back in Spanish too.
+const SECRET_START = "<!-- hidden -->";
+const SECRET_END = "<!-- /hidden -->";
+const SECRET_MARKER = /^\s*<!--\s*(\/)?\s*(hidden|oculto)\s*-->\s*$/i;
 
 export function escapeHtml(str: string): string {
   return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
@@ -17,6 +24,14 @@ export function markdownToHtml(text: string): string {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const out: string[] = [];
   let listTag: "ul" | "ol" | null = null;
+  // Between a <!-- hidden --> line and its closing one (or the end, if it never closes: better
+  // hidden than shown by mistake), every block is hidden from players.
+  let secret = false;
+  let anySecret = false;
+  function push(html: string) {
+    if (secret) anySecret = true;
+    out.push(secret ? html.replace(/^<(\w+)/, `<$1 ${SECRET_ATTR}=""`) : html);
+  }
 
   function closeList() {
     if (listTag) {
@@ -36,7 +51,8 @@ export function markdownToHtml(text: string): string {
       /^(-{3,}|\*{3,})\s*$/.test(line) ||
       /^\s*[-*]\s+/.test(line) ||
       /^\s*\d+[.)]\s+/.test(line) ||
-      /^\s*>\s?/.test(line)
+      /^\s*>\s?/.test(line) ||
+      SECRET_MARKER.test(line)
     );
   }
 
@@ -82,6 +98,14 @@ export function markdownToHtml(text: string): string {
   while (i < lines.length) {
     const line = lines[i];
 
+    const marker = SECRET_MARKER.exec(line);
+    if (marker) {
+      closeList();
+      secret = !marker[1];
+      i++;
+      continue;
+    }
+
     if (/^\s*$/.test(line)) {
       closeList();
       i++;
@@ -91,7 +115,7 @@ export function markdownToHtml(text: string): string {
     if (isTableStart(i)) {
       closeList();
       const [html, next] = table(i);
-      out.push(html);
+      push(html);
       i = next;
       continue;
     }
@@ -100,14 +124,14 @@ export function markdownToHtml(text: string): string {
     if (heading) {
       closeList();
       const tag = "h" + Math.min(heading[1].length, 4);
-      out.push(`<${tag}>${inline(heading[2].trim())}</${tag}>`);
+      push(`<${tag}>${inline(heading[2].trim())}</${tag}>`);
       i++;
       continue;
     }
 
     if (/^(-{3,}|\*{3,})\s*$/.test(line)) {
       closeList();
-      out.push("<hr>");
+      push("<hr>");
       i++;
       continue;
     }
@@ -116,7 +140,7 @@ export function markdownToHtml(text: string): string {
     if (bullet) {
       if (listTag !== "ul") {
         closeList();
-        out.push("<ul>");
+        push("<ul>");
         listTag = "ul";
       }
       out.push(`<li>${inline(bullet[1])}</li>`);
@@ -128,7 +152,7 @@ export function markdownToHtml(text: string): string {
     if (numbered) {
       if (listTag !== "ol") {
         closeList();
-        out.push("<ol>");
+        push("<ol>");
         listTag = "ol";
       }
       out.push(`<li>${inline(numbered[1])}</li>`);
@@ -147,7 +171,7 @@ export function markdownToHtml(text: string): string {
         qLines.push(m[1]);
         i++;
       }
-      out.push(`<blockquote>${qLines.map(inline).join("<br>")}</blockquote>`);
+      push(`<blockquote>${qLines.map(inline).join("<br>")}</blockquote>`);
       continue;
     }
 
@@ -161,10 +185,14 @@ export function markdownToHtml(text: string): string {
       pLines.push(lines[i]);
       i++;
     }
-    out.push(`<p>${pLines.map(inline).join("<br>")}</p>`);
+    push(`<p>${pLines.map(inline).join("<br>")}</p>`);
   }
   closeList();
-  return out.join("");
+  if (!anySecret) return out.join("");
+  const box = document.createElement("div");
+  box.innerHTML = out.join("");
+  compactSecret(box);
+  return box.innerHTML;
 }
 
 // The reverse of markdownToHtml() above, used for the Markdown export option. Formatting with no
@@ -263,7 +291,16 @@ export function htmlToMarkdown(html: string): string {
     return out.join("\n");
   }
 
-  return Array.prototype.map.call(container.children, block).join("\n\n");
+  // Each run of hidden blocks goes between the hidden-part markers.
+  const blocks = Array.prototype.slice.call(container.children) as HTMLElement[];
+  const covered = secretCoverage(blocks);
+  const parts: string[] = [];
+  blocks.forEach((el, i) => {
+    if (covered[i] && !covered[i - 1]) parts.push(SECRET_START);
+    parts.push(block(el));
+    if (covered[i] && !covered[i + 1]) parts.push(SECRET_END);
+  });
+  return parts.join("\n\n");
 }
 
 // Note HTML reduced to inline content, for pasting into a table cell (which holds no blocks): each

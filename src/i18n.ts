@@ -54,6 +54,7 @@ export interface ToolbarStrings {
   outdent: string;
   indent: string;
   removeFormat: string;
+  secret: string;
 }
 
 export interface Strings {
@@ -97,6 +98,7 @@ export interface Strings {
   deleteTemplateAria: string;
   resizeTitle: string;
   settingsClose: string;
+  settingsInfo: string;
   settingsAccentLabel: string;
   settingsLangLabel: string;
   settingsHelpLabel: string;
@@ -124,10 +126,17 @@ export interface Strings {
   publishSignedOutTitle: string;
   publishConfirmTitle: string;
   publishConfirmHint: string;
+  publishConfirmSecret: (n: number) => string;
   publishConfirmBtn: string;
   publishCancelBtn: string;
   publishError: string;
   publicDotTitle: string;
+  settingsSecretLabel: string;
+  secretEyeHint: string;
+  secretEyeClickBtn: string;
+  secretEyeLockBtn: string;
+  secretEyeShow: string;
+  secretEyeLocked: string;
   settingsSharedLabel: string;
   sharedKeyHint: string;
   regenerateKeyBtn: string;
@@ -197,6 +206,7 @@ const STRINGS: Record<Language, Strings> = {
     deleteTemplateAria: "Eliminar plantilla ",
     resizeTitle: "Redimensionar panel (doble clic: tamaño por defecto)",
     settingsClose: "Cerrar",
+    settingsInfo: "Más información",
     settingsAccentLabel: "Color de acento",
     settingsLangLabel: "Idioma",
     settingsHelpLabel: "Ayuda",
@@ -228,11 +238,18 @@ const STRINGS: Record<Language, Strings> = {
     unpublishTitle: "Compartida con los jugadores — clic para dejar de compartirla",
     publishSignedOutTitle: "Para compartir notas con los jugadores, iniciá sesión en Configuración",
     publishConfirmTitle: "¿Compartir esta nota?",
+    publishConfirmSecret: (n) => (n === 1 ? "La parte oculta de la nota no se comparte." : `Las ${n} partes ocultas de la nota no se comparten.`),
     publishConfirmHint: "Todos los jugadores de la sala van a poder verla, pero no editarla. Lo que cambies después también lo van a ver.",
     publishConfirmBtn: "Compartir",
     publishCancelBtn: "Cancelar",
     publishError: "No se pudo compartir la nota. Probá de nuevo.",
     publicDotTitle: "Compartida con los jugadores",
+    settingsSecretLabel: "Partes ocultas",
+    secretEyeHint: "Hacer click en el ojito junto a una parte oculta la vuelve a mostrar a los jugadores. Bloquealo si preferís que el ojito solo la señale.",
+    secretEyeClickBtn: "Mostrar con un click",
+    secretEyeLockBtn: "Bloqueado",
+    secretEyeShow: "Mostrar a los jugadores",
+    secretEyeLocked: "Oculto a los jugadores",
     settingsSharedLabel: "Notas compartidas",
     sharedKeyHint: "Los jugadores ven las notas públicas gracias a una clave guardada en la sala. Si alguien que ya no está en la sala la conserva, regenerala: desde ese momento deja de verlas. Los que están en la sala no notan nada.",
     regenerateKeyBtn: "Regenerar clave",
@@ -279,6 +296,7 @@ const STRINGS: Record<Language, Strings> = {
       tableHeaderRow: "Fila de encabezado", tableHeaderCol: "Columna de encabezado", tableDelete: "Eliminar tabla",
       bulletList: "Lista", numberList: "Lista numerada", outdent: "Reducir sangría",
       indent: "Aumentar sangría", removeFormat: "Quitar formato",
+      secret: "Ocultar a los jugadores",
     },
   },
   en: {
@@ -322,6 +340,7 @@ const STRINGS: Record<Language, Strings> = {
     deleteTemplateAria: "Delete template ",
     resizeTitle: "Resize panel (double-click: default size)",
     settingsClose: "Close",
+    settingsInfo: "More info",
     settingsAccentLabel: "Accent color",
     settingsLangLabel: "Language",
     settingsHelpLabel: "Help",
@@ -353,11 +372,18 @@ const STRINGS: Record<Language, Strings> = {
     unpublishTitle: "Shared with the players — click to stop sharing it",
     publishSignedOutTitle: "To share notes with the players, sign in from Settings",
     publishConfirmTitle: "Share this note?",
+    publishConfirmSecret: (n) => (n === 1 ? "The note's hidden part isn't shared." : `The note's ${n} hidden parts aren't shared.`),
     publishConfirmHint: "Every player in the room will be able to see it, but not edit it. They'll also see whatever you change afterwards.",
     publishConfirmBtn: "Share",
     publishCancelBtn: "Cancel",
     publishError: "Couldn't share the note. Please try again.",
     publicDotTitle: "Shared with the players",
+    settingsSecretLabel: "Hidden parts",
+    secretEyeHint: "Clicking the eye next to a hidden part shows it to players again. Lock it if you'd rather the eye only mark it.",
+    secretEyeClickBtn: "Show on click",
+    secretEyeLockBtn: "Locked",
+    secretEyeShow: "Show to players",
+    secretEyeLocked: "Hidden from players",
     settingsSharedLabel: "Shared notes",
     sharedKeyHint: "Players see the public notes through a key stored in the room. If someone no longer in the room still has it, regenerate it: from then on they stop seeing them. Those in the room won't notice a thing.",
     regenerateKeyBtn: "Regenerate key",
@@ -404,6 +430,7 @@ const STRINGS: Record<Language, Strings> = {
       tableHeaderRow: "Header row", tableHeaderCol: "Header column", tableDelete: "Delete table",
       bulletList: "Bullet list", numberList: "Numbered list", outdent: "Decrease indent",
       indent: "Increase indent", removeFormat: "Clear formatting",
+      secret: "Hide from players",
     },
   },
 };

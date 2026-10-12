@@ -4,6 +4,7 @@
 // block, invisible to every block-aware helper, so the block menu then treats it all as one line —
 // and wrap text in spans that copy computed styles (`background-color: initial`, `font-size: ...`).
 // This runs after every edit and when a note opens, so an already-broken note repairs itself too.
+import { SECRET_ATTR, SECRET_TAGS } from "./secret";
 
 // What a top-level child of the surface may be. DIV: older notes can hold browser-made <div> lines.
 const BLOCK_TAGS = /^(P|H[1-4]|BLOCKQUOTE|UL|OL|HR|TABLE|DIV)$/;
@@ -159,6 +160,7 @@ export function splitBlock(block: HTMLElement): HTMLElement[] {
   });
   close();
   carryLineAttributes(block, pieces);
+  if (block.hasAttribute(SECRET_ATTR)) pieces.forEach((p) => p.setAttribute(SECRET_ATTR, ""));
   block.replaceWith(...pieces);
   return pieces;
 }
@@ -437,6 +439,8 @@ export function itemToLine(li: HTMLElement, surface: HTMLElement): HTMLElement |
   FIRST_PIECE_ONLY.forEach((a) => after.removeAttribute(a));
   after.appendChild(tail.extractContents());
   const line = top.tagName === "BLOCKQUOTE" ? (after.cloneNode(false) as HTMLElement) : document.createElement("p");
+  // An item of a hidden list is a hidden line.
+  if (top.hasAttribute(SECRET_ATTR)) line.setAttribute(SECRET_ATTR, "");
   while (li.firstChild) line.appendChild(li.firstChild);
   if (!line.hasChildNodes()) line.appendChild(document.createElement("br"));
   li.remove();
@@ -465,6 +469,7 @@ export function liftOutOfLists(surface: HTMLElement): boolean {
     const after = top.cloneNode(false) as HTMLElement;
     FIRST_PIECE_ONLY.forEach((a) => after.removeAttribute(a));
     after.appendChild(tail.extractContents());
+    if (top.hasAttribute(SECRET_ATTR) && SECRET_TAGS.test(el.tagName)) el.setAttribute(SECRET_ATTR, "");
     top.after(el);
     el.after(after);
     dropSplitLeftovers(top);
@@ -499,7 +504,7 @@ export function divsToParagraphs(surface: HTMLElement): boolean {
   Array.prototype.slice.call(surface.children).forEach((div: HTMLElement) => {
     if (div.tagName !== "DIV") return;
     const p = document.createElement("p");
-    ["data-exit", "data-standalone"].forEach((a) => {
+    ["data-exit", "data-standalone", SECRET_ATTR].forEach((a) => {
       const v = div.getAttribute(a);
       if (v !== null) p.setAttribute(a, v);
     });

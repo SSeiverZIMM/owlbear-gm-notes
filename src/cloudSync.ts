@@ -1,5 +1,6 @@
 import { initializeApp, type FirebaseApp } from "firebase/app";
 import { sanitizeNoteHtml } from "./sanitizeHtml";
+import { stripSecret } from "./secret";
 import {
   getAuth,
   GoogleAuthProvider,
@@ -141,8 +142,9 @@ export function setSharedKey(key: string | null) {
 function sharedNoteDoc(key: string, noteId: string) {
   return doc(db!, "shared", key, "notes", noteId);
 }
+// The public copy: the note minus its hidden parts, which never leave the GM's own copies.
 function sharedNoteData(note: Note, uid: string) {
-  return { title: note.title, html: note.html, updatedAt: note.updatedAt, owner: uid };
+  return { title: note.title, html: stripSecret(note.html), updatedAt: note.updatedAt, owner: uid };
 }
 // The version of each public copy last written from here ("key/noteId" → updatedAt): the flush that
 // follows a publish finds it already up and skips it.

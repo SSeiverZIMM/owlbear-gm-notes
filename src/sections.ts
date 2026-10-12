@@ -5,18 +5,32 @@ export interface SectionsContext {
   blockAt: (node: Node) => HTMLElement | null;
   /** A section was folded or unfolded (by the GM, or to show what an edit would touch). */
   onFoldChange: () => void;
+  /** The sections were laid out again (anything that changes them does this). */
+  onLayout?: () => void;
+}
+
+// Collapsible sections: an H1-H4 with data-collapsed hides every following top-level block up to
+// the next heading of the same or a higher level (H4, the "toggle" level, is styled as plain text).
+// Blocks are only ever hidden, never moved or nested, so nothing else in the editor needs to know
+// about sections. The chevron is the heading's ::before, drawn in the gutter to its left.
+export function headingLevel(el: Element): number {
+  const m = /^H([1-4])$/.exec(el.tagName);
+  return m ? Number(m[1]) : 0;
+}
+// A line (paragraph, quote or heading) can leave the sections around it: data-exit="N" ends every
+// open section of level N or deeper right before it, so it — and what follows — sits outside
+// them (a heading then opens its own section there). Older notes mark a line that left its toggle
+// as data-standalone: the same as data-exit="4".
+export const canExit = (el: Element): boolean => /^(P|DIV|BLOCKQUOTE|H[1-4])$/.test(el.tagName);
+export function exitLevel(el: Element): number {
+  if (!canExit(el)) return 0;
+  const n = Number(el.getAttribute("data-exit"));
+  if (Number.isInteger(n) && n >= 1 && n <= 4) return n;
+  return el.hasAttribute("data-standalone") ? 4 : 0;
 }
 
 export function createSections(ctx: SectionsContext) {
   const surface = ctx.surface;
-  // Collapsible sections: an H1-H4 with data-collapsed hides every following top-level block up to
-  // the next heading of the same or a higher level (H4, the "toggle" level, is styled as plain text).
-  // Blocks are only ever hidden, never moved or nested, so nothing else in the editor needs to know
-  // about sections. The chevron is the heading's ::before, drawn in the gutter to its left.
-  function headingLevel(el: Element): number {
-    const m = /^H([1-4])$/.exec(el.tagName);
-    return m ? Number(m[1]) : 0;
-  }
   // Also gives every block a data-depth (how many sections enclose it), which indents it a step per
   // level, so the indent shows which section each line belongs to — toggles look like plain text, so
   // it's also what shows where one ends. A section ends at the next heading of the same or a higher
@@ -24,17 +38,6 @@ export function createSections(ctx: SectionsContext) {
   function setFlag(el: HTMLElement, name: string, on: boolean) {
     if (on && !el.hasAttribute(name)) el.setAttribute(name, "");
     else if (!on && el.hasAttribute(name)) el.removeAttribute(name);
-  }
-  // A line (paragraph, quote or heading) can leave the sections around it: data-exit="N" ends every
-  // open section of level N or deeper right before it, so it — and what follows — sits outside
-  // them (a heading then opens its own section there). Older notes mark a line that left its toggle
-  // as data-standalone: the same as data-exit="4".
-  const canExit = (el: Element): boolean => /^(P|DIV|BLOCKQUOTE|H[1-4])$/.test(el.tagName);
-  function exitLevel(el: Element): number {
-    if (!canExit(el)) return 0;
-    const n = Number(el.getAttribute("data-exit"));
-    if (Number.isInteger(n) && n >= 1 && n <= 4) return n;
-    return el.hasAttribute("data-standalone") ? 4 : 0;
   }
   // Steps through the note's top-level blocks keeping the sections open at each one (their levels,
   // outermost first; always increasing, since a heading first closes any section of its level or
@@ -67,6 +70,7 @@ export function createSections(ctx: SectionsContext) {
       setFlag(el, "data-folded", !!hideUntil);
       if (!hideUntil && level && el.hasAttribute("data-collapsed")) hideUntil = level;
     });
+    if (ctx.onLayout) ctx.onLayout();
   }
   // What Decrease indent (-1) / Increase indent (+1) on a line would set its exit to:
   // out of the innermost section it's in, or back into the last one it left. Null when there's

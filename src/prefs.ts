@@ -5,6 +5,7 @@ import type { Language } from "./i18n";
 
 const LANGUAGE_KEY = getPluginId("language");
 const ACCENT_KEY = getPluginId("accent");
+const SECRET_EYE_LOCK_KEY = getPluginId("secretEyeLocked");
 
 const ACCENT_IDS = ["violet", "aqua", "amber", "rose", "green", "blue"] as const;
 export type AccentId = (typeof ACCENT_IDS)[number];
@@ -42,4 +43,14 @@ export async function getAccentPref(): Promise<AccentPref> {
 
 export async function setAccentPref(accent: AccentPref): Promise<void> {
   await OBR.player.setMetadata({ [ACCENT_KEY]: accent });
+}
+
+/** Whether clicking the eye next to a hidden part does nothing (instead of showing it to players). */
+export async function getSecretEyeLocked(): Promise<boolean> {
+  const metadata = await OBR.player.getMetadata();
+  return metadata[SECRET_EYE_LOCK_KEY] === true;
+}
+
+export async function setSecretEyeLocked(locked: boolean): Promise<void> {
+  await OBR.player.setMetadata({ [SECRET_EYE_LOCK_KEY]: locked });
 }

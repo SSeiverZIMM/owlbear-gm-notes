@@ -35,6 +35,7 @@ const TOOLBAR_BUTTONS: ToolbarButtonSpec[] = [
   { cmd: "indent", titleKey: "indent", svg: '<svg viewBox="0 0 16 16" fill="none"><path d="M2.5 4.5 5.5 8l-3 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 3.5h5.5M8 8h5.5M8 12.5h5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>' },
   { sep: true },
   { cmd: "removeFormat", titleKey: "removeFormat", svg: '<svg viewBox="0 0 16 16" fill="none"><path d="M3 3h7M6.5 3v7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M2.5 13.5 13.5 2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>' },
+  { cmd: "toggleSecret", titleKey: "secret", svg: '<svg viewBox="0 0 16 16" fill="none"><path d="M1.8 8s2.3-4.2 6.2-4.2S14.2 8 14.2 8s-2.3 4.2-6.2 4.2S1.8 8 1.8 8Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><circle cx="8" cy="8" r="1.9" stroke="currentColor" stroke-width="1.3"/><path d="M2.5 13.5 13.5 2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>' },
 ];
 
 function buildColorPicker(pickerId: string, btnId: string, swatchesId: string, title: string, iconSvg: string, noneTitle?: string): string {

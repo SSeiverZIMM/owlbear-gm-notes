@@ -213,15 +213,15 @@ body{
   padding:3px 4px; background:var(--bg-paper); border-bottom:1px solid var(--divider);
 }
 .toolbar button{
-  width:23px; height:23px; padding:0; border-radius:5px; border:0; background:transparent; color:var(--text-secondary);
+  width:22px; height:23px; padding:0; border-radius:5px; border:0; background:transparent; color:var(--text-secondary);
   cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:700;
 }
-.toolbar button svg{ width:17px; height:17px; }
+.toolbar button svg{ width:16px; height:16px; }
 .toolbar button:hover{ background:color-mix(in srgb, var(--primary-main) 16%, transparent); color:var(--text-primary); }
 .toolbar button.active{ background:color-mix(in srgb, var(--primary-main) 20%, transparent); color:var(--primary-light); }
 /* Separators take up whatever room the row has left, so the groups spread evenly across it: from
-   7px (the tightest that fits the whole toolbar on one row at the panel's default width, 434px) up
-   to 14px. The line is drawn centered in that room. */
+   7px up to 14px. The buttons are 22px wide (23px tall) so the whole toolbar fits on one row at the
+   panel's default width, 434px. The line is drawn centered in that room. */
 .toolbar .tb-sep{
   flex:1 1 0; min-width:7px; max-width:14px; align-self:stretch; margin:4px 0;
   background:linear-gradient(var(--divider), var(--divider)) center / 1px 100% no-repeat;
@@ -229,12 +229,12 @@ body{
 
 .pill-picker{ position:relative; display:inline-flex; }
 .pill-picker .pill-picker-btn{
-  width:23px; height:23px; padding:0; border-radius:5px; border:0; background:transparent; color:var(--text-secondary);
+  width:22px; height:23px; padding:0; border-radius:5px; border:0; background:transparent; color:var(--text-secondary);
   cursor:pointer; display:flex; align-items:center; justify-content:center;
 }
-.pill-picker .pill-picker-btn svg{ width:17px; height:17px; }
+.pill-picker .pill-picker-btn svg{ width:16px; height:16px; }
 .pill-picker .pill-picker-btn:hover{ background:color-mix(in srgb, var(--primary-main) 16%, transparent); color:var(--text-primary); }
-.pill-picker .block-picker-btn{ width:auto; gap:1px; padding:0 2px 0 4px; font-size:14px; }
+.pill-picker .block-picker-btn{ width:auto; gap:1px; padding:0 1px 0 3px; font-size:14px; }
 .pill-picker .block-picker-btn svg{ width:12px; height:12px; }
 .block-picker-label{ min-width:16px; text-align:center; }
 .pill-swatches.block-menu{ flex-direction:column; gap:1px; min-width:140px; overflow-x:hidden; overflow-y:auto; }
@@ -311,6 +311,28 @@ body{
 .editor-surface h4::before{ opacity:.7; }
 .editor-surface :is(h1, h2, h3, h4)[data-collapsed]::before{ opacity:.9; transform:none; }
 .editor-surface [data-folded]{ display:none; }
+/* Parts hidden from players (see secret.ts): each run of them in a row gets one darker box with a
+   thin border, reaching just past the text, and an eye in the right margin (drawn by the editor on
+   a layer under the text). */
+.secret-layer{ position:absolute; inset:0 auto auto 0; width:100%; height:0; pointer-events:none; }
+.editor-surface{ z-index:1; }
+.secret-box{
+  position:absolute; border-radius:4px; background:color-mix(in srgb, black 14%, transparent);
+  box-shadow:inset 0 0 0 .5px color-mix(in srgb, var(--text-secondary) 40%, transparent);
+}
+.secret-eye{
+  position:absolute; width:18px; height:18px; background:var(--text-secondary); opacity:.85; border-radius:4px;
+  -webkit-mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8Z' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'/><circle cx='8' cy='8' r='2' fill='none' stroke='black' stroke-width='1.3'/><path d='M2.5 13.5 13.5 2.5' stroke='black' stroke-width='1.3' stroke-linecap='round'/></svg>") center / 14px no-repeat;
+  mask:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8s-2.4 4.5-6.5 4.5S1.5 8 1.5 8Z' fill='none' stroke='black' stroke-width='1.3' stroke-linejoin='round'/><circle cx='8' cy='8' r='2' fill='none' stroke='black' stroke-width='1.3'/><path d='M2.5 13.5 13.5 2.5' stroke='black' stroke-width='1.3' stroke-linecap='round'/></svg>") center / 14px no-repeat;
+}
+/* Clickable (see Settings → Hidden parts): above the text, and its box lights up on hover. */
+.secret-eye.clickable{ pointer-events:auto; cursor:pointer; z-index:2; }
+.secret-eye.clickable:hover{ opacity:1; background:var(--text-primary); }
+.secret-box:has(+ .secret-eye.clickable:hover){
+  background:color-mix(in srgb, black 8%, transparent);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--primary-main) 70%, transparent);
+}
+.editor-surface.has-secret{ padding-right:30px; }
 /* One indent step per enclosing section (H1 > H2 > H3 > toggle > text is at most 4 deep). */
 .editor-surface [data-depth="1"]{ margin-left:6px; }
 .editor-surface [data-depth="2"]{ margin-left:12px; }
@@ -438,6 +460,23 @@ body{
 .settings-close-btn:hover{ background:color-mix(in srgb, var(--primary-main) 16%, transparent); color:var(--primary-light); }
 .settings-modal-body{ flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:16px; }
 .settings-section{ display:flex; flex-direction:column; gap:8px; }
+/* A section's explanation, behind the "i" next to its title (see main.ts). */
+.settings-section.has-info{ position:relative; }
+.settings-label-row{ display:flex; align-items:center; gap:6px; }
+.info-btn{
+  flex:0 0 auto; width:15px; height:15px; padding:0; border-radius:50%; cursor:help;
+  border:1px solid color-mix(in srgb, var(--text-disabled) 80%, transparent); background:transparent;
+  color:var(--text-secondary); font:italic 700 9.5px/1 Georgia, serif; display:inline-flex; align-items:center; justify-content:center;
+}
+.info-btn:hover, .settings-section.tip-open .info-btn{ color:var(--primary-light); border-color:var(--primary-main); }
+.info-btn:focus-visible{ outline:2px solid var(--primary-main); outline-offset:1px; }
+.settings-section > .cleanup-hint.info-tip{
+  display:none; position:absolute; left:0; right:0; top:22px; z-index:5;
+  padding:8px 10px; border-radius:8px; background:var(--bg-solid); border:1px solid var(--divider);
+  box-shadow:0 6px 18px rgba(0,0,0,.35); color:var(--text-secondary); font-size:11px;
+}
+.settings-section:has(.info-btn:hover, .info-btn:focus-visible) > .info-tip,
+.settings-section.tip-open > .info-tip{ display:block; }
 .settings-section-label{
   font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--text-disabled);
 }

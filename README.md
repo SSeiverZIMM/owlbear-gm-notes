@@ -28,7 +28,8 @@ https://notes.ijpedraza.com/manifest.json
   [Collapsible sections](#collapsible-sections) below.
 - Multiple notes per room, with search and a quick switcher.
 - **Share notes with players**: make any note public and players can read
-  it (but not edit it), live as you write. See
+  it (but not edit it), live as you write, minus any parts you've hidden
+  from them. See
   [Sharing notes with players](#sharing-notes-with-players) below.
 - **Templates**: start a note from a ready-made layout instead of a blank
   page — see [Templates](#templates) below.
@@ -128,6 +129,23 @@ the cloud for players to read.
   sections, but not edit them: there's no toolbar and no **+** button.
   In Settings they only get the language, the accent color, and the manual.
 - **Your edits reach them live**, within about 15 seconds.
+- **Hide parts of a note**: select one or more lines and click the eye
+  button (the last one in the toolbar). They show in a darker box, with
+  an eye beside it, and players never see them: they're taken out before
+  the note is shared. Hide a heading or a toggle and its whole section
+  goes with it. To show them again, click the eye beside the box (Ctrl+Z
+  undoes it), or select them and click the toolbar's eye. If you'd rather
+  the eye beside the box ignore clicks, lock it in Settings → Hidden
+  parts. Hiding something in a public
+  note takes it away from players right away, but text you write first
+  and hide afterwards was visible until then, so hide the line first
+  and then write in it. A new line started from a hidden one is hidden
+  too. When you share a note, the confirmation says how many hidden
+  parts it has.
+- **Hidden parts in Markdown** go between `<!-- hidden -->` and
+  `<!-- /hidden -->` lines, which Markdown viewers don't show. Exporting
+  writes them, and importing or pasting reads them back (`<!-- oculto -->`
+  works too).
 - **Stop sharing**: click the green **Public** pill again. Deleting a
   shared note also takes it away from players.
 - **Regenerate key** (Settings → Shared notes): players read the public
@@ -137,6 +155,10 @@ the cloud for players to read.
 - **Signing out** with public notes asks first whether to unpublish them.
   Signed out, they can't be updated or unpublished, so players would keep
   seeing them as they are until you sign in again.
+
+![A shared note, as the GM sees it: a hidden part in its box](docs/screenshot-sharing-gm.png)
+
+![The same note, as players see it: the hidden part isn't there](docs/screenshot-sharing-player.png)
 
 ## Notes live on your device — with optional cloud sync
 

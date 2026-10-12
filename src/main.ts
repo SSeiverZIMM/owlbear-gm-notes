@@ -13,12 +13,13 @@ import { renderToolbar, BLOCK_TYPES, BLOCK_ONLY_CMDS } from "./toolbar";
 import type { BlockTag } from "./toolbar";
 import { createHistory } from "./history";
 import { createSections } from "./sections";
+import { SECRET_ATTR, SECRET_TAGS, secretCoverage, secretPartCount } from "./secret";
 import { normalizeStructure, splitBlock, keepingSelection, itemToLine } from "./structure";
 import type { Note } from "./notes";
 import { getPluginId } from "./pluginId";
 import { getTemplates, setTemplates, resolveTemplate, toCustomTemplate, missingBuiltins, newBuiltinTemplate } from "./templates";
 import type { Template } from "./templates";
-import { getLanguage, setLanguage, getAccentPref, setAccentPref } from "./prefs";
+import { getLanguage, setLanguage, getAccentPref, setAccentPref, getSecretEyeLocked, setSecretEyeLocked } from "./prefs";
 import type { AccentPref } from "./prefs";
 import { ACCENTS, ACCENT_ORDER, watchTheme } from "./theme";
 import {
@@ -57,6 +58,10 @@ let activeId: string | null = null;
 let searchTerm = "";
 let language: Language = "en";
 let accentPref: AccentPref = "auto";
+// Settings → Hidden parts: whether the eye next to a hidden part ignores clicks.
+let secretEyeLocked = false;
+// The open editor's redraw of its hidden parts (the eyes change with the setting above).
+let redrawSecret: (() => void) | null = null;
 let role: "GM" | "PLAYER" = "GM";
 // The room's key for public notes (see publicKey.ts), null until some GM publishes the first one.
 let publicKey: string | null = null;
@@ -474,6 +479,10 @@ const publishConfirmOverlay = document.getElementById("publishConfirmOverlay") a
 let pendingPublish: string | null = null;
 function openPublishConfirm(note: Note) {
   pendingPublish = note.id;
+  const parts = secretPartCount(note.html);
+  const secretHint = document.getElementById("publishConfirmSecret")!;
+  secretHint.hidden = !parts;
+  secretHint.textContent = parts ? strings().publishConfirmSecret(parts) : "";
   publishConfirmOverlay.hidden = false;
   (document.getElementById("publishConfirmBtn") as HTMLButtonElement).focus();
 }
@@ -846,7 +855,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   containerEl.innerHTML =
     toolbarHtml +
     `<div class="title-row"><input class="note-title-input" id="${idPrefix}TitleInput" placeholder="${escapeHtml(s.titlePlaceholder)}" value="${escapeHtml(seed.title)}" /></div>` +
-    `<div class="editor-scroll"><div class="editor-surface" id="${idPrefix}EditorSurface" contenteditable="true" data-placeholder="${escapeHtml(s.bodyPlaceholder)}"></div></div>` +
+    `<div class="editor-scroll"><div class="secret-layer" id="${idPrefix}SecretLayer" aria-hidden="true"></div><div class="editor-surface" id="${idPrefix}EditorSurface" contenteditable="true" data-placeholder="${escapeHtml(s.bodyPlaceholder)}"></div></div>` +
     `<div class="editor-foot"><span class="save-state"><span class="pip" id="${idPrefix}SavePip"></span><span id="${idPrefix}SavedAgo">${escapeHtml(s.savedPrefix + s.savedInstant)}</span><button type="button" class="cloud-sync-btn" id="${idPrefix}CloudSyncBtn" hidden><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M5.3 12.3h6.4a2.7 2.7 0 0 0 .35-5.37 3.75 3.75 0 0 0-7.3-1.1A2.6 2.6 0 0 0 5.3 12.3Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button></span><span id="${idPrefix}WordCount">${escapeHtml(s.wordsCount(0))}</span></div>`;
 
   const surface = document.getElementById(idPrefix + "EditorSurface") as HTMLElement;
@@ -966,8 +975,14 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     const value = btn.dataset.value || undefined;
     // Table cells hold inline formatting only (see updateToolbarState, which greys these out there).
     if (BLOCK_ONLY_CMDS.has(cmd) && tables.selectionInTable()) return;
+    if (cmd === "toggleSecret") {
+      surface.focus();
+      toggleSecret();
+      return;
+    }
     pushHistory();
     surface.focus();
+    secretSnapshot();
     if (cmd === "formatBlock") {
       const menuValue = ((value || "P").toUpperCase()) as BlockTag;
       // Only the block type: a converted line stays in the section it's in (leaving one is the
@@ -1005,9 +1020,11 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     if (cmd === "underline" || cmd === "strikeThrough" || cmd === "removeFormat") {
       syncTextDecorationColors();
     }
+    const hid = guardSecret();
     const n = currentNote();
     if (n) n.html = editorHtml();
     scheduleSave();
+    if (hid) pushSecretNow();
     updateEmptyState();
     updateToolbarState();
   });
@@ -1441,6 +1458,8 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
       // Only a quote can hold a list (delistTouchedBlocks already turned any other list into lines).
       if (finalTag !== "BLOCKQUOTE" && (b.tagName === "UL" || b.tagName === "OL")) return;
       const nb = document.createElement(finalTag);
+      // Hidden from players is not its type either.
+      if (b.hasAttribute(SECRET_ATTR)) nb.setAttribute(SECRET_ATTR, "");
       if (b.tagName === "UL" || b.tagName === "OL") {
         // A list's <li>s are only valid inside a <ul>/<ol> — unpacking them straight into the new
         // block (like every other case here does) leaves them with no list ancestor at all, which
@@ -1807,6 +1826,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     // saved (input) like any other edit, and startEditStep() makes it undoable.
     if (cut) {
       startEditStep();
+      secretSnapshot();
       document.execCommand("delete");
     }
   }
@@ -1833,6 +1853,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   // Inserts pasted or dropped content at the selection: `own` is content in our own format (from
   // this editor), `text` anyone else's plain text.
   function insertTransfer(own: string, text: string) {
+    secretSnapshot();
     // Into a table cell, everything goes in as inline content (cells hold no blocks): our own
     // formatted content flattened, anyone else's text as literal text (no Markdown), its lines
     // becoming line breaks.
@@ -1865,6 +1886,12 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     document.execCommand("insertHTML", false, html);
     tables.normalizeTables();
     removeEditorNoise();
+    if (guardSecret()) {
+      const n = currentNote();
+      if (n) n.html = editorHtml();
+      scheduleSave();
+      pushSecretNow();
+    }
   }
 
   // Inserts content in our own format at the selection as nodes, not through execCommand("insertHTML"):
@@ -2027,6 +2054,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
       const wholeLines = coversWholeLines(source);
       sel.removeAllRanges();
       sel.addRange(source);
+      secretSnapshot();
       document.execCommand("delete");
       tidyAfterMove(wholeLines);
       const back = document.createRange();
@@ -2124,6 +2152,12 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
       return;
     }
     noteTyping();
+    // Typing at a caret can't move anything from one block to another; everything else can (see
+    // guardSecret).
+    const sel = window.getSelection();
+    const typing = /^insert(Text|CompositionText|ReplacementText)$/.test(ev.inputType) && !!sel && sel.isCollapsed;
+    if (typing) secretBefore = null;
+    else secretSnapshot();
   });
   // A pill's trailing edge: Chrome treats "end of the pill's text" and "start of whatever follows it"
   // as the same caret spot, draws the caret inside the pill there, and keeps typed text inside it —
@@ -2145,7 +2179,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   // anchor's zero-width space and the data-folded markers applyFolding() puts on hidden blocks
   // (recomputed from each heading's data-collapsed whenever a note is shown, so never worth storing).
   function editorHtml(): string {
-    let html = surface.innerHTML.split(' data-folded=""').join("").replace(/ data-depth="\d+"/g, "");
+    let html = surface.innerHTML.split(' data-folded=""').join("").split(' data-secret-in=""').join("").replace(/ data-depth="\d+"/g, "");
     if (pillAnchor) html = html.split(PILL_ANCHOR).join("");
     return html;
   }
@@ -2326,8 +2360,222 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   }).observe(surface, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["style", "color", "class"] });
   syncListMarkerColors();
 
+  // ---------- parts hidden from players (see secret.ts) ----------
+  // The GM sees them striped: data-secret on a block hidden itself, data-secret-in (view-side only,
+  // like data-folded) on one inside a hidden section.
+  const topBlocks = () => Array.prototype.slice.call(surface.children) as HTMLElement[];
+  function paintSecret() {
+    const blocks = topBlocks();
+    const covered = secretCoverage(blocks);
+    blocks.forEach((el, i) => el.toggleAttribute("data-secret-in", covered[i] && !el.hasAttribute(SECRET_ATTR)));
+    drawSecret();
+  }
+  // Each run of hidden blocks in a row is drawn as one box (gaps between its lines included), with
+  // an eye outside it to the right, on a layer under the text: boxes on the blocks themselves would
+  // stop at each block's edge. Redrawn whenever the blocks may have moved.
+  const secretLayer = document.getElementById(idPrefix + "SecretLayer") as HTMLElement;
+  let secretFrame = 0;
+  function drawSecret() {
+    if (secretFrame) return;
+    secretFrame = requestAnimationFrame(() => {
+      secretFrame = 0;
+      if (!surface.isConnected) return;
+      const blocks = topBlocks();
+      const covered = secretCoverage(blocks);
+      // Room for the eyes in the right margin, only in notes that have hidden parts.
+      surface.classList.toggle("has-secret", covered.some(Boolean));
+      const scroller = surface.parentElement as HTMLElement;
+      const base = scroller.getBoundingClientRect();
+      const runs: { top: number; bottom: number; left: number; right: number; blocks: HTMLElement[] }[] = [];
+      let run: (typeof runs)[number] | null = null;
+      blocks.forEach((el, i) => {
+        // A folded block isn't on screen (and can only follow a visible heading, which ends a run
+        // if it isn't hidden): it's only part of the run, for the eye to show it too.
+        if (el.hasAttribute("data-folded")) {
+          if (run) run.blocks.push(el);
+          return;
+        }
+        if (!covered[i]) {
+          run = null;
+          return;
+        }
+        const r = el.getBoundingClientRect();
+        const top = r.top - base.top + scroller.scrollTop;
+        const bottom = r.bottom - base.top + scroller.scrollTop;
+        const left = r.left - base.left;
+        const right = r.right - base.left;
+        if (run) {
+          run.bottom = bottom;
+          run.left = Math.min(run.left, left);
+          run.right = Math.max(run.right, right);
+          run.blocks.push(el);
+        } else {
+          run = { top, bottom, left, right, blocks: [el] };
+          runs.push(run);
+        }
+      });
+      secretRuns = runs.map((r) => r.blocks);
+      const eyeTitle = escapeHtml(secretEyeLocked ? strings().secretEyeLocked : strings().secretEyeShow);
+      secretLayer.innerHTML = runs
+        .map(
+          (b, i) =>
+            `<div class="secret-box" style="top:${b.top - 3}px;left:${b.left - 4}px;width:${b.right - b.left + 8}px;height:${b.bottom - b.top + 6}px"></div>` +
+            `<div class="secret-eye${secretEyeLocked ? "" : " clickable"}" data-run="${i}" title="${eyeTitle}" style="top:${b.top + 2}px;left:${b.right + 6}px"></div>`
+        )
+        .join("");
+    });
+  }
+  redrawSecret = drawSecret;
+  // The eye shows its run to players again (unless Settings locks it): the whole run, with the
+  // section of a hidden heading in it. Undoable like any edit.
+  let secretRuns: HTMLElement[][] = [];
+  secretLayer.addEventListener("mousedown", (ev) => {
+    // Keeps the caret (and focus) in the note.
+    if ((ev.target as HTMLElement).closest(".secret-eye")) ev.preventDefault();
+  });
+  secretLayer.addEventListener("click", (ev) => {
+    const eye = (ev.target as HTMLElement).closest(".secret-eye.clickable") as HTMLElement | null;
+    const run = eye ? secretRuns[Number(eye.dataset.run)] : null;
+    if (!run || secretEyeLocked) return;
+    pushHistory();
+    run.forEach((el) => el.removeAttribute(SECRET_ATTR));
+    secretBefore = null;
+    paintSecret();
+    const n = currentNote();
+    if (n) n.html = editorHtml();
+    scheduleSave();
+    updateToolbarState();
+  });
+  new ResizeObserver(drawSecret).observe(surface);
+  // The blocks the selection is on (with whether each is hidden): a selection merely ending at the
+  // very start of a block, as a triple-clicked line does, isn't on that one.
+  function secretSelection(): { blocks: HTMLElement[]; covered: boolean[] } {
+    const sel = window.getSelection();
+    const r = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+    if (!r || !surface.contains(r.commonAncestorContainer)) return { blocks: [], covered: [] };
+    const all = topBlocks();
+    const cov = secretCoverage(all);
+    const blocks: HTMLElement[] = [];
+    const covered: boolean[] = [];
+    all.forEach((el, i) => {
+      if (!SECRET_TAGS.test(el.tagName) || !r.intersectsNode(el)) return;
+      if (!r.collapsed && !el.contains(r.startContainer) && el.contains(r.endContainer)) {
+        const before = document.createRange();
+        before.setStart(el, 0);
+        before.setEnd(r.endContainer, r.endOffset);
+        if (before.toString().replace(/\u200b/g, "") === "" && !before.cloneContents().querySelector("hr, table, br")) return;
+      }
+      blocks.push(el);
+      covered.push(cov[i]);
+    });
+    return { blocks, covered };
+  }
+  // The toolbar's eye: hides the selected blocks, or shows them again if all of them are hidden. A
+  // block hidden because its whole section is stays hidden: that's the section's heading's to undo.
+  function toggleSecret() {
+    const { blocks, covered } = secretSelection();
+    if (!blocks.length) return;
+    const show = blocks.every((_b, i) => covered[i]);
+    pushHistory();
+    blocks.forEach((el, i) => {
+      if (show) el.removeAttribute(SECRET_ATTR);
+      else if (!covered[i]) el.setAttribute(SECRET_ATTR, "");
+    });
+    secretBefore = null;
+    paintSecret();
+    const n = currentNote();
+    if (n) n.html = editorHtml();
+    scheduleSave();
+    if (!show) pushSecretNow();
+    updateToolbarState();
+  }
+  // A public note whose hidden parts grew goes up right away, not after the usual wait: what was
+  // just hidden shouldn't stay in front of the players for those seconds.
+  function pushSecretNow() {
+    const n = currentNote();
+    if (n && n.public) void flushCloudSync();
+  }
+  // Edits must never make a hidden part public by accident. Before any edit that can move content
+  // between blocks (anything but typing at a caret), secretSnapshot() records what's hidden; after
+  // it, guardSecret() hides whatever now holds what was hidden: a hidden line merged into the one
+  // before it, the lines of a hidden section whose heading stopped being one (each then hidden on
+  // its own), content moved into a list or out of one. Blocks the edit created out of a selection
+  // that touched something hidden (a list made from it, lines pasted into it) are hidden too. Merging
+  // lines, Chrome rebuilds the text as new nodes, so a hidden line the edit removed is also followed
+  // by its text: what of it the edit didn't delete, found in the line the caret ends up in. It errs
+  // towards hiding: what it hides shows striped, and the eye shows it again.
+  const squash = (s: string) => s.replace(/[\s\u00a0\u200b]/g, "");
+  let secretBefore: { covered: HTMLElement[]; nodes: Node[]; top: Set<Element>; touched: boolean; rest: Map<HTMLElement, string> } | null = null;
+  function secretSnapshot() {
+    const blocks = topBlocks();
+    const cov = secretCoverage(blocks);
+    const covered = blocks.filter((_b, i) => cov[i]);
+    const nodes: Node[] = [];
+    covered.forEach((el) => {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        // Line breaks and bare whitespace say nothing about where the content went.
+        if (node.nodeType === 3 ? (node as Text).data.replace(/[\s\u200b]/g, "") !== "" : node.nodeName !== "BR") nodes.push(node);
+      }
+    });
+    const sel = window.getSelection();
+    const r = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+    const inEditor = !!r && surface.contains(r.commonAncestorContainer);
+    const touched = inEditor && covered.some((el) => r!.intersectsNode(el));
+    // Each hidden line's text the edit can't delete: all of it, or what follows the selection when
+    // the selection ends inside it (none when it ends after it).
+    const rest = new Map<HTMLElement, string>();
+    covered.forEach((el) => {
+      let text = el.textContent || "";
+      if (inEditor && r!.intersectsNode(el)) {
+        if (!el.contains(r!.endContainer)) return;
+        const after = document.createRange();
+        after.selectNodeContents(el);
+        after.setStart(r!.endContainer, r!.endOffset);
+        text = after.toString();
+      }
+      if (squash(text)) rest.set(el, squash(text));
+    });
+    secretBefore = { covered, nodes, top: new Set(blocks), touched, rest };
+  }
+  // Returns whether it hid anything.
+  function guardSecret(): boolean {
+    const snap = secretBefore;
+    secretBefore = null;
+    if (!snap) return false;
+    const blocks = topBlocks();
+    const cov = secretCoverage(blocks);
+    const visible = new Set(blocks.filter((_b, i) => !cov[i]));
+    const hide = new Set<HTMLElement>();
+    const holder = (n: Node) => {
+      if (!n.isConnected || n === surface || !surface.contains(n)) return;
+      const top = blockAt(n);
+      if (top && visible.has(top)) hide.add(top);
+    };
+    snap.covered.forEach(holder);
+    snap.nodes.forEach(holder);
+    const sel = window.getSelection();
+    const caretBlock = sel && sel.rangeCount ? blockAt(sel.getRangeAt(0).startContainer) : null;
+    if (caretBlock && visible.has(caretBlock)) {
+      const text = squash(caretBlock.textContent || "");
+      snap.rest.forEach((rest, el) => {
+        if (!el.isConnected && text.includes(rest)) hide.add(caretBlock);
+      });
+    }
+    if (snap.touched) blocks.forEach((el) => { if (!snap.top.has(el) && visible.has(el)) hide.add(el); });
+    let hid = false;
+    hide.forEach((el) => {
+      if (!SECRET_TAGS.test(el.tagName)) return;
+      el.setAttribute(SECRET_ATTR, "");
+      hid = true;
+    });
+    if (hid) paintSecret();
+    return hid;
+  }
+
   // Collapsible sections: see sections.ts.
-  const sections = createSections({ surface, blockAt, onFoldChange: saveFoldState });
+  const sections = createSections({ surface, blockAt, onFoldChange: saveFoldState, onLayout: paintSecret });
   const { headingLevel, canExit, exitLevel, applyFolding, sectionStep, stepSection, sel0Block, toggleFold, guardFoldedMerge } = sections;
   // Every structural change (typing a new block, setBlockType's replacements, undo/redo, paste)
   // shows up as a childList change on the surface itself; applyFolding only touches attributes, so
@@ -2388,11 +2636,14 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     if (!(ev as InputEvent).isComposing) repairStructure();
     ensureBlockWrapper();
     if (pillAnchor && pillAnchor.data !== PILL_ANCHOR) releasePillAnchor();
+    const hid = guardSecret();
+    drawSecret();
     const n = currentNote();
     if (n) n.html = editorHtml();
     updateEmptyState();
     scheduleWordCountUpdate();
     scheduleSave();
+    if (hid) pushSecretNow();
   });
   surface.addEventListener("compositionend", () => {
     if (!repairStructure()) return;
@@ -2480,20 +2731,26 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
       if (!block || ev.ctrlKey || ev.metaKey || ev.altKey || sectionStep(block, dir) === null) return;
       ev.preventDefault();
       pushHistory();
+      secretSnapshot();
       stepSection(block, dir);
+      const hid = guardSecret();
       const n = currentNote();
       if (n) n.html = editorHtml();
       scheduleSave();
+      if (hid) pushSecretNow();
       updateToolbarState();
       return;
     }
     ev.preventDefault();
     pushHistory();
+    secretSnapshot();
     if (!(ev.shiftKey && outdentSelection())) document.execCommand(ev.shiftKey ? "outdent" : "indent", false, undefined);
     repairStructure();
+    const hid = guardSecret();
     const n = currentNote();
     if (n) n.html = editorHtml();
     scheduleSave();
+    if (hid) pushSecretNow();
     updateEmptyState();
     updateToolbarState();
   });
@@ -2593,6 +2850,14 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     const quoteColorBtnEl = document.getElementById(idPrefix + "QuoteColorPickerBtn");
     if (quoteColorBtnEl) {
       quoteColorBtnEl.classList.toggle("active", !!getQuoteAtSelection());
+    }
+
+    const secretBtn = document.querySelector(`#${idPrefix}Toolbar button[data-cmd="toggleSecret"]`);
+    if (secretBtn) {
+      const { blocks, covered } = secretSelection();
+      const on = blocks.length > 0 && blocks.every((_b, i) => covered[i]);
+      secretBtn.classList.toggle("active", on);
+      secretBtn.setAttribute("aria-pressed", String(on));
     }
 
     // Block-level tools do nothing inside a table (see BLOCK_ONLY_CMDS), so they show as disabled.
@@ -2831,6 +3096,47 @@ function closeSettings() {
   settingsOverlay.hidden = true;
 }
 document.getElementById("settingsBtn")!.addEventListener("click", openSettings);
+
+// Each Settings section's explanation sits behind an "i" next to its title: shown on hover, on
+// keyboard focus, or while clicked open (touch screens have no hover). The explanation keeps its
+// element (and id), so whatever updates its text still does; it's only shown differently.
+const settingsBody = document.querySelector("#settingsOverlay .settings-modal-body") as HTMLElement;
+settingsBody.querySelectorAll(".settings-section > .cleanup-hint").forEach((hint) => {
+  const section = hint.parentElement!;
+  const label = section.querySelector(".settings-section-label");
+  if (!label) return;
+  const row = document.createElement("div");
+  row.className = "settings-label-row";
+  label.replaceWith(row);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "info-btn";
+  btn.textContent = "i";
+  btn.setAttribute("aria-describedby", hint.id);
+  btn.setAttribute("aria-expanded", "false");
+  row.append(label, btn);
+  hint.classList.add("info-tip");
+  hint.setAttribute("role", "tooltip");
+  section.classList.add("has-info");
+});
+function closeInfoTips(except?: Element) {
+  settingsBody.querySelectorAll(".settings-section.tip-open").forEach((s) => {
+    if (s === except) return;
+    s.classList.remove("tip-open");
+    s.querySelector(".info-btn")?.setAttribute("aria-expanded", "false");
+  });
+}
+settingsBody.addEventListener("click", (ev) => {
+  const btn = (ev.target as HTMLElement).closest(".info-btn");
+  if (!btn) {
+    closeInfoTips();
+    return;
+  }
+  const section = btn.closest(".settings-section")!;
+  closeInfoTips(section);
+  const open = section.classList.toggle("tip-open");
+  btn.setAttribute("aria-expanded", String(open));
+});
 document.getElementById("settingsBackdrop")!.addEventListener("click", closeSettings);
 document.getElementById("settingsCloseBtn")!.addEventListener("click", closeSettings);
 
@@ -2922,6 +3228,21 @@ document.getElementById("regenerateKeyBtn")!.addEventListener("click", async () 
 });
 document.getElementById("cloudSyncNowBtn")!.addEventListener("click", () => void flushCloudSync());
 
+document.getElementById("secretEyeRow")!.addEventListener("click", (ev) => {
+  const b = (ev.target as HTMLElement).closest("button[data-eye]") as HTMLElement | null;
+  if (!b) return;
+  const locked = b.dataset.eye === "locked";
+  if (locked === secretEyeLocked) return;
+  secretEyeLocked = locked;
+  void setSecretEyeLocked(locked);
+  updateSecretEyeButtons();
+  if (redrawSecret) redrawSecret();
+});
+function updateSecretEyeButtons() {
+  document.getElementById("secretEyeClickBtn")!.classList.toggle("is-active", !secretEyeLocked);
+  document.getElementById("secretEyeLockBtn")!.classList.toggle("is-active", secretEyeLocked);
+}
+
 document.getElementById("settingsLangRow")!.addEventListener("click", (ev) => {
   const b = (ev.target as HTMLElement).closest("button[data-lang]") as HTMLElement | null;
   if (!b || b.dataset.lang === language) return;
@@ -2939,6 +3260,10 @@ function applyLanguage() {
   document.getElementById("publishConfirmHint")!.textContent = s.publishConfirmHint;
   document.getElementById("publishConfirmBtn")!.textContent = s.publishConfirmBtn;
   document.getElementById("publishCancelBtn")!.textContent = s.publishCancelBtn;
+  document.querySelectorAll("#settingsOverlay .info-btn").forEach((b) => {
+    (b as HTMLElement).title = s.settingsInfo;
+    b.setAttribute("aria-label", s.settingsInfo);
+  });
   const publishConfirmCloseBtn = document.getElementById("publishConfirmCloseBtn")!;
   publishConfirmCloseBtn.title = s.settingsClose;
   publishConfirmCloseBtn.setAttribute("aria-label", s.settingsClose);
@@ -2976,6 +3301,11 @@ function applyLanguage() {
   document.getElementById("cloudSyncHint")!.textContent = s.cloudSyncHint;
   document.getElementById("cloudSignInBtn")!.textContent = s.cloudSignInBtn;
   document.getElementById("cloudSignOutBtn")!.textContent = s.cloudSignOutBtn;
+  document.getElementById("settingsSecretLabel")!.textContent = s.settingsSecretLabel;
+  document.getElementById("secretEyeHint")!.textContent = s.secretEyeHint;
+  document.getElementById("secretEyeClickBtn")!.textContent = s.secretEyeClickBtn;
+  document.getElementById("secretEyeLockBtn")!.textContent = s.secretEyeLockBtn;
+  updateSecretEyeButtons();
   document.getElementById("settingsSharedLabel")!.textContent = s.settingsSharedLabel;
   document.getElementById("sharedKeyHint")!.textContent = s.sharedKeyHint;
   document.getElementById("regenerateKeyBtn")!.textContent = s.regenerateKeyBtn;
@@ -3195,12 +3525,14 @@ let currentRoomIdForCloud: string | null = null;
 
 // ---------- boot ----------
 async function boot() {
-  const [initialNotes, initialLanguage, initialAccent, initialRole] = await Promise.all([
+  const [initialNotes, initialLanguage, initialAccent, initialRole, initialEyeLocked] = await Promise.all([
     getNotes(),
     getLanguage(),
     getAccentPref(),
     OBR.player.getRole(),
+    getSecretEyeLocked(),
   ]);
+  secretEyeLocked = initialEyeLocked;
   notes = initialNotes;
   try {
     publicKey = await getPublicKey();
