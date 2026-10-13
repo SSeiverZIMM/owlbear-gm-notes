@@ -20,6 +20,13 @@ https://notes.ijpedraza.com/manifest.json
   color pills, text color, colored blockquotes, dividers, and
   bulleted/numbered lists (with indent for sub-lists). Color the start of a
   list item and its bullet or number takes the same color.
+- **Markdown shortcuts**: at the start of a line, type `- ` (or `* `) for a
+  bullet list, `1. ` for a numbered one, `[] ` for a checklist, `# ` to
+  `#### ` for headings (`#### ` is a toggle), `> ` for a quote, or `---`
+  and Enter for a divider. Ctrl+Z right after keeps what you typed as text.
+- **Checklists**: pick **Checklist** in the list menu and each item gets a
+  box; click it to check the item off (it turns gray). Players see the
+  boxes in shared notes, but can't change them.
 - **Tables**: header rows and columns, cell colors, merged cells, columns
   you can resize, and rows and columns you can drag around — see
   [Tables](#tables) below.
@@ -27,6 +34,9 @@ https://notes.ijpedraza.com/manifest.json
   and use toggles to tuck details away inside normal-looking text — see
   [Collapsible sections](#collapsible-sections) below.
 - Multiple notes per room, with search and a quick switcher.
+- **Trash**: a deleted note goes to the trash (at the bottom of the notes
+  list) for 30 days, so you can restore it or delete it for good. With
+  cloud sync, the trash follows you to your other devices too.
 - **Share notes with players**: make any note public and players can read
   it (but not edit it), live as you write, minus any parts you've hidden
   from them. See
@@ -37,7 +47,7 @@ https://notes.ijpedraza.com/manifest.json
   headings, lists, and quotes come along as they were.
 - **Paste from anywhere**: text from other apps comes in clean, without
   stray fonts or colors, and Markdown is recognized — headings,
-  `**bold**`/`*italic*`, lists, `> quotes`, `---` dividers, and tables all
+  `**bold**`/`*italic*`, lists, `- [ ]` checklists, `> quotes`, `---` dividers, and tables all
   show up styled instead of as raw symbols.
 - **Export and import**: save a note (or all of them at once) as a file, and
   bring it back whenever you want. Choose JSON to keep everything exactly

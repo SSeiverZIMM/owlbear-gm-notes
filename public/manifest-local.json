@@ -1,5 +1,5 @@
 {
-  "name": "GM Notes (Local)",
+  "name": "GM Notes (dev)",
   "version": "1.2.0",
   "manifest_version": 3,
   "author": "Ignacio Pedraza",
@@ -7,7 +7,7 @@
   "icon": "https://notes.ijpedraza.com/logo.svg",
   "description": "Local dev build of GM Notes, served from the Vite dev server.",
   "action": {
-    "title": "GM Notes (Local)",
+    "title": "GM Notes (dev)",
     "icon": "https://notes.ijpedraza.com/icon-toolbar.png",
     "popover": "http://localhost:5173/",
     "width": 434,

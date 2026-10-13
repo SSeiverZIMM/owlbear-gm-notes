@@ -11,7 +11,7 @@ interface ToolbarButtonSpec {
   titleKey?: keyof ToolbarStrings;
   style?: string;
   value?: string;
-  picker?: "pill" | "textColor" | "quoteColor" | "block" | "table";
+  picker?: "pill" | "textColor" | "quoteColor" | "block" | "table" | "list";
   sep?: boolean;
   svg?: string;
 }
@@ -29,8 +29,7 @@ const TOOLBAR_BUTTONS: ToolbarButtonSpec[] = [
   { cmd: "divider", titleKey: "divider", svg: '<svg viewBox="0 0 16 16" fill="none"><path d="M2 8h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>' },
   { picker: "table" },
   { sep: true },
-  { cmd: "insertUnorderedList", titleKey: "bulletList", svg: '<svg viewBox="0 0 16 16" fill="none"><circle cx="2.3" cy="4" r="1.1" fill="currentColor"/><circle cx="2.3" cy="8" r="1.1" fill="currentColor"/><circle cx="2.3" cy="12" r="1.1" fill="currentColor"/><path d="M6 4h8M6 8h8M6 12h8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>' },
-  { cmd: "insertOrderedList", titleKey: "numberList", svg: '<svg viewBox="0 0 16 16" fill="none"><text x="0" y="5.2" font-size="4.2" fill="currentColor">1</text><text x="0" y="9.2" font-size="4.2" fill="currentColor">2</text><text x="0" y="13.2" font-size="4.2" fill="currentColor">3</text><path d="M6 4h8M6 8h8M6 12h8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>' },
+  { picker: "list" },
   { cmd: "outdent", titleKey: "outdent", svg: '<svg viewBox="0 0 16 16" fill="none"><path d="M5.5 4.5 2.5 8l3 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 3.5h5.5M8 8h5.5M8 12.5h5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>' },
   { cmd: "indent", titleKey: "indent", svg: '<svg viewBox="0 0 16 16" fill="none"><path d="M2.5 4.5 5.5 8l-3 3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 3.5h5.5M8 8h5.5M8 12.5h5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>' },
   { sep: true },
@@ -77,13 +76,35 @@ function buildBlockPicker(idPrefix: string, tb: ToolbarStrings): string {
   );
 }
 
+// The list menu: one button for every kind of list, its icon one line of each. Its items are
+// ordinary list toolbar buttons (handled by the toolbar's click listener, like the block menu's).
+const LIST_TYPES: { cmd: string; key: "bulletList" | "numberList" | "checkList"; svg: string }[] = [
+  { cmd: "insertUnorderedList", key: "bulletList", svg: '<svg viewBox="0 0 16 16" fill="none"><circle cx="2.3" cy="4" r="1.1" fill="currentColor"/><circle cx="2.3" cy="8" r="1.1" fill="currentColor"/><circle cx="2.3" cy="12" r="1.1" fill="currentColor"/><path d="M6 4h8M6 8h8M6 12h8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>' },
+  { cmd: "checkList", key: "checkList", svg: '<svg viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="4" height="4" rx=".8" stroke="currentColor" stroke-width="1.1"/><rect x="1" y="9.6" width="4" height="4" rx=".8" stroke="currentColor" stroke-width="1.1"/><path d="M1.9 11.6l.9.9 1.5-1.8" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/><path d="M7.5 4h6.5M7.5 11.6h6.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>' },
+  { cmd: "insertOrderedList", key: "numberList", svg: '<svg viewBox="0 0 16 16" fill="none"><text x="0" y="5.2" font-size="4.2" fill="currentColor">1</text><text x="0" y="9.2" font-size="4.2" fill="currentColor">2</text><text x="0" y="13.2" font-size="4.2" fill="currentColor">3</text><path d="M6 4h8M6 8h8M6 12h8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>' },
+];
+const LIST_MENU_ICON =
+  '<svg viewBox="0 0 16 16" fill="none"><circle cx="2.5" cy="2.9" r="1.55" fill="currentColor"/><text x="0.6" y="10.3" font-size="6.2" font-weight="700" fill="currentColor">1</text><rect x="0.85" y="11.75" width="3.5" height="3.5" rx=".7" stroke="currentColor" stroke-width="1.2"/><path d="M6.8 2.9h7.7M6.8 8.3h7.7M6.8 13.5h7.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+function buildListPicker(idPrefix: string, tb: ToolbarStrings): string {
+  const items = LIST_TYPES.map(
+    (t) => `<button type="button" class="list-item" data-cmd="${t.cmd}" data-value="">${t.svg}<span>${escapeHtml(tb[t.key])}</span></button>`
+  ).join("");
+  return (
+    `<div class="pill-picker list-picker" id="${idPrefix}ListPicker">` +
+    `<button type="button" class="pill-picker-btn" id="${idPrefix}ListPickerBtn" title="${tb.listMenu}" aria-haspopup="true" aria-expanded="false">${LIST_MENU_ICON}</button>` +
+    `<div class="pill-swatches block-menu list-menu" id="${idPrefix}ListMenu" hidden>${items}</div>` +
+    `</div>`
+  );
+}
+
 // Toolbar commands that act on whole blocks, which table cells don't hold (cells take inline
 // formatting only: bold, color, pills, line breaks...).
-export const BLOCK_ONLY_CMDS = new Set(["formatBlock", "insertUnorderedList", "insertOrderedList", "indent", "outdent"]);
+export const BLOCK_ONLY_CMDS = new Set(["formatBlock", "insertUnorderedList", "insertOrderedList", "checkList", "indent", "outdent"]);
 
 function renderToolbarButton(b: ToolbarButtonSpec, idPrefix: string, tb: ToolbarStrings): string {
   if (b.sep) return '<span class="tb-sep"></span>';
   if (b.picker === "block") return buildBlockPicker(idPrefix, tb);
+  if (b.picker === "list") return buildListPicker(idPrefix, tb);
   if (b.picker === "table") return buildTablePicker(idPrefix, tb);
   if (b.picker === "pill") {
     return buildColorPicker(

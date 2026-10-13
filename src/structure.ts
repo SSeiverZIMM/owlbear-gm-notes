@@ -582,6 +582,40 @@ function isEmptyInline(el: Element): boolean {
 export function cleanInlineNoise(root: HTMLElement, opts: NormalizeOptions = {}): boolean {
   let changed = false;
   Array.prototype.slice.call(root.querySelectorAll("span, font")).forEach((el: HTMLElement) => {
+    // A link to a note (see noteLinks.ts): atomic, holding only its text. Whatever the browser put
+    // on or in it (styles copied while merging lines, formatting) goes; one inside another (or an
+    // empty one) can't be shown as a link.
+    if (el.classList.contains("note-link")) {
+      if (el.parentElement && el.parentElement.closest(".note-link")) {
+        el.replaceWith(document.createTextNode(el.textContent || ""));
+        changed = true;
+        return;
+      }
+      if (!(el.textContent || "").replace(/\u200b/g, "")) {
+        el.remove();
+        changed = true;
+        return;
+      }
+      Array.prototype.slice.call(el.attributes).forEach((a: Attr) => {
+        if (!/^(class|data-note|contenteditable|data-missing)$/.test(a.name)) {
+          el.removeAttribute(a.name);
+          changed = true;
+        }
+      });
+      if (el.className !== "note-link") {
+        el.className = "note-link";
+        changed = true;
+      }
+      if (el.getAttribute("contenteditable") !== "false") {
+        el.setAttribute("contenteditable", "false");
+        changed = true;
+      }
+      if (el.children.length) {
+        el.textContent = el.textContent;
+        changed = true;
+      }
+      return;
+    }
     if (el.classList.contains("note-pill")) {
       // An emptied pill (its text dragged or deleted away, sometimes leaving an empty text node in
       // it) would stay behind as an invisible, unreachable one.
@@ -685,6 +719,137 @@ export function keepingSelection(surface: HTMLElement, change: () => boolean): b
       }
     }
   }
+  return changed;
+}
+
+// ---------- pills through Chrome's list commands ----------
+// Chrome's list commands drop a pill that is a line's whole content (a list item holding only a
+// pill, switched to the other list type; a quoted item like that, its list taken away), leaving its
+// text plain. Before such a command, markPills() notes each pill of the lines it touches: its text,
+// its line's text (and how many lines before it have the same text) and where in it the pill
+// starts. After it, restorePills() wraps each pill that disappeared (or lost its text) back around
+// the same text at the same place of that line (lines keep their order). A pill holding a line break
+// can see its text split off into a line of its own: a line the command created, holding exactly the
+// pill's text, gets it back then. Where the text isn't there exactly, it leaves things as they are.
+const LINE_SELECTOR_ALL = "li, p, div, h1, h2, h3, h4, blockquote";
+const NESTED_BLOCK = /^(UL|OL|LI|P|DIV|H[1-4]|BLOCKQUOTE|TABLE)$/;
+const ZERO_WIDTH = /\u200b/g;
+// The text nodes of a line itself, not of the lines nested in it (a sub-list, a quote's list).
+function lineTextNodes(line: Element): Text[] {
+  const walker = document.createTreeWalker(line, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) =>
+      n.nodeType === 1 ? (NESTED_BLOCK.test((n as Element).tagName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP) : NodeFilter.FILTER_ACCEPT,
+  });
+  const out: Text[] = [];
+  while (walker.nextNode()) out.push(walker.currentNode as Text);
+  return out;
+}
+const visible = (s: string) => s.replace(ZERO_WIDTH, "");
+function lineText(line: Element): string {
+  return visible(lineTextNodes(line).map((t) => t.data).join(""));
+}
+// The spot `offset` visible characters into the line (zero-width anchors don't count): for a pill's
+// "start", right before its first character; for its "end", right after its last.
+function lineSpot(texts: Text[], offset: number, edge: "start" | "end"): { node: Text; offset: number } | null {
+  let left = offset;
+  for (const t of texts) {
+    for (let i = 0; i < t.data.length; i++) {
+      if (t.data[i] === "\u200b") continue;
+      if (edge === "start" && left === 0) return { node: t, offset: i };
+      left--;
+      if (edge === "end" && left === 0) return { node: t, offset: i + 1 };
+    }
+  }
+  return null;
+}
+// Widens the range over the edges of the inline elements it starts or ends at (the same text), so
+// what's taken out is whole elements — a bold word, not a bold word and an empty <b> left behind.
+function widenToElements(range: Range, line: Element) {
+  const len = (n: Node) => (n.nodeType === 3 ? (n as Text).length : n.childNodes.length);
+  if (range.startContainer.nodeType === 3 && range.startOffset === len(range.startContainer)) range.setStartAfter(range.startContainer);
+  while (range.startOffset === 0 && range.startContainer !== line) range.setStartBefore(range.startContainer);
+  if (range.endContainer.nodeType === 3 && range.endOffset === 0) range.setEndBefore(range.endContainer);
+  while (range.endOffset === len(range.endContainer) && range.endContainer !== line) range.setEndAfter(range.endContainer);
+}
+export interface PillMark {
+  pill: HTMLElement;
+  shell: HTMLElement;
+  line: string;
+  nth: number;
+  start: number;
+  text: string;
+  /** The lines there were before the command. */
+  known: Set<Element>;
+}
+function surfaceLines(surface: HTMLElement): HTMLElement[] {
+  return (Array.prototype.slice.call(surface.querySelectorAll(LINE_SELECTOR_ALL)) as HTMLElement[]).filter((el) => !el.closest("td, th"));
+}
+export function markPills(surface: HTMLElement, blocks: Element[]): PillMark[] {
+  const marks: PillMark[] = [];
+  const lines = surfaceLines(surface);
+  const known = new Set<Element>(lines);
+  blocks.forEach((block) => {
+    (Array.prototype.slice.call(block.querySelectorAll(".note-pill")) as HTMLElement[]).forEach((pill) => {
+      if (pill.closest("td, th")) return;
+      const line = pill.parentElement && (pill.parentElement.closest(LINE_SELECTOR_ALL) as HTMLElement | null);
+      if (!line || !surface.contains(line)) return;
+      const texts = lineTextNodes(line);
+      const own = lineText(line);
+      const nth = lines.slice(0, lines.indexOf(line)).filter((l) => lineText(l) === own).length;
+      // Each piece of a pill between its line breaks is marked on its own: Chrome's list commands
+      // split lines at those breaks, and the editor colors pills line by line anyway.
+      const pieces: Text[][] = [[]];
+      const walker = document.createTreeWalker(pill, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const n = walker.currentNode;
+        if (n.nodeName === "BR") pieces.push([]);
+        else if (n.nodeType === 3) pieces[pieces.length - 1].push(n as Text);
+      }
+      pieces.forEach((piece) => {
+        const text = visible(piece.map((t) => t.data).join(""));
+        const first = piece.length ? texts.indexOf(piece[0]) : -1;
+        if (first < 0 || !text) return;
+        const start = visible(texts.slice(0, first).map((t) => t.data).join("")).length;
+        marks.push({ pill, shell: pill.cloneNode(false) as HTMLElement, line: own, nth, start, text, known });
+      });
+    });
+  });
+  return marks;
+}
+export function restorePills(surface: HTMLElement, marks: PillMark[]): boolean {
+  const intact = (m: PillMark) =>
+    m.pill.isConnected && surface.contains(m.pill) && m.pill.classList.contains("note-pill") && visible(m.pill.textContent || "").includes(m.text);
+  const lost = marks.filter((m) => !intact(m));
+  if (!lost.length) return false;
+  const lines = surfaceLines(surface);
+  const claimed = new Set<Element>();
+  let changed = false;
+  lost.forEach((m) => {
+    let line: HTMLElement | undefined = lines.filter((l) => lineText(l) === m.line)[m.nth];
+    let start = m.start;
+    if (!line) {
+      line = lines.find((l) => !m.known.has(l) && !claimed.has(l) && lineText(l) === m.text);
+      start = 0;
+    }
+    if (!line) return;
+    claimed.add(line);
+    const texts = lineTextNodes(line);
+    const a = lineSpot(texts, start, "start");
+    const b = lineSpot(texts, start + m.text.length, "end");
+    if (!a || !b) return;
+    const range = document.createRange();
+    range.setStart(a.node, a.offset);
+    range.setEnd(b.node, b.offset);
+    if (visible(range.toString()) !== m.text) return;
+    // Already (partly) in a pill: not this one's to fix.
+    const inPill = (n: Node) => !!(n.nodeType === 3 ? n.parentElement : (n as Element))?.closest(".note-pill");
+    if (inPill(a.node) || inPill(b.node) || Array.prototype.some.call(line.querySelectorAll(".note-pill"), (p: Node) => range.intersectsNode(p))) return;
+    widenToElements(range, line);
+    const pill = m.shell.cloneNode(false) as HTMLElement;
+    pill.appendChild(range.extractContents());
+    range.insertNode(pill);
+    changed = true;
+  });
   return changed;
 }
 

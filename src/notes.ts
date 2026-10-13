@@ -10,6 +10,8 @@ export interface Note {
   updatedAt: number;
   /** Shared with the room's players (see sharedNotes in cloudSync.ts). Absent = private. */
   public?: boolean;
+  /** In the trash since then (see main.ts): kept apart from the notes, emptied after 30 days. */
+  deletedAt?: number;
 }
 
 // Notes used to live in OBR.room.setMetadata(), which shares a single 16kB budget across EVERY
@@ -46,6 +48,7 @@ export function sanitizeNote(value: unknown): Note | undefined {
     html: value.html,
     updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : Date.now(),
     ...(value.public === true ? { public: true } : {}),
+    ...(typeof value.deletedAt === "number" ? { deletedAt: value.deletedAt } : {}),
   };
 }
 
@@ -112,6 +115,21 @@ export async function getNotes(): Promise<Note[]> {
 export async function setNotes(notes: Note[]): Promise<void> {
   const roomId = OBR.room.id;
   await store.setItem(dbKeyForRoom(roomId), notes);
+}
+
+// The trash (notes deleted less than 30 days ago) is stored apart from the notes, under its own key:
+// older versions, which don't know about it, simply don't see it.
+function trashKeyForRoom(roomId: string): string {
+  return `trash:${roomId}`;
+}
+
+export async function getTrash(): Promise<Note[]> {
+  const stored = await store.getItem<unknown>(trashKeyForRoom(OBR.room.id));
+  return sanitizeNotes(stored).filter((n) => typeof n.deletedAt === "number");
+}
+
+export async function setTrash(trash: Note[]): Promise<void> {
+  await store.setItem(trashKeyForRoom(OBR.room.id), trash);
 }
 
 /** Erases every note stored locally for the CURRENT room — an explicit, GM-initiated reset (e.g.

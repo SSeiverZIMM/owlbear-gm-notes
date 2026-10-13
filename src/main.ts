@@ -2,7 +2,7 @@ import OBR from "@owlbear-rodeo/sdk";
 import "./style.css";
 import { getStrings } from "./i18n";
 import type { Language, Strings } from "./i18n";
-import { getNotes, setNotes, clearAllNotes, notesStorageBytes } from "./notes";
+import { getNotes, setNotes, getTrash, setTrash, notesStorageBytes } from "./notes";
 import { sanitizeNoteHtml } from "./sanitizeHtml";
 import { escapeHtml, markdownToHtml, flattenToInline, stripHtml } from "./markdown";
 import { exportNote as exportNoteFile, exportAll, contentFromImportFile, isDuplicateTemplate } from "./importExport";
@@ -14,7 +14,9 @@ import type { BlockTag } from "./toolbar";
 import { createHistory } from "./history";
 import { createSections } from "./sections";
 import { SECRET_ATTR, SECRET_TAGS, secretCoverage, secretPartCount } from "./secret";
-import { normalizeStructure, splitBlock, keepingSelection, itemToLine } from "./structure";
+import { LINK_ATTR, linkElement, linkedIds, syncLinks } from "./noteLinks";
+import type { LinkTarget } from "./noteLinks";
+import { normalizeStructure, splitBlock, keepingSelection, itemToLine, markPills, restorePills } from "./structure";
 import type { Note } from "./notes";
 import { getPluginId } from "./pluginId";
 import { getTemplates, setTemplates, resolveTemplate, toCustomTemplate, missingBuiltins, newBuiltinTemplate } from "./templates";
@@ -32,6 +34,7 @@ import {
   getSyncStatus,
   markNoteDirty,
   deleteNoteFromCloud,
+  refreshSharedCopies,
   flushCloudSync,
   watchCloudNotes,
   watchCloudTemplates,
@@ -48,6 +51,9 @@ import type { User } from "firebase/auth";
 
 // ---------- state ----------
 let notes: Note[] = [];
+// Deleted notes, restorable for 30 days (see the trash section), and whether the switcher shows them.
+let trash: Note[] = [];
+let trashView = false;
 // Global to this browser, not per room — see templates.ts.
 let templates: Template[] = [];
 // False until the stored templates have actually been read. persistTemplates() writes the whole
@@ -91,13 +97,20 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pagehide", flushPendingSave);
 
+// List kinds, as the list menu offers them: a checklist is a bullet list marked data-check.
+type ListKind = "UL" | "OL" | "CHECK";
+const CHECK_ATTR = "data-check";
+function listKind(list: Element): ListKind {
+  return list.tagName === "OL" ? "OL" : list.hasAttribute(CHECK_ATTR) ? "CHECK" : "UL";
+}
+
 function strings(): Strings {
   return getStrings(language);
 }
 
 async function persist(): Promise<boolean> {
   try {
-    await setNotes(notes);
+    await Promise.all([setNotes(notes), setTrash(trash)]);
     hideStorageBanner();
     updateStorageMeter();
     return true;
@@ -127,7 +140,7 @@ function hideStorageBanner() {
 function updateStorageMeter() {
   const text = document.getElementById("storageMeterText");
   if (!text) return;
-  const usedKB = (notesStorageBytes(notes) / 1024).toFixed(1);
+  const usedKB = ((notesStorageBytes(notes) + notesStorageBytes(trash)) / 1024).toFixed(1);
   text.textContent = strings().storageMeterText(usedKB);
 }
 
@@ -218,6 +231,11 @@ function updateSwitcherHeader() {
 }
 
 function renderList() {
+  updateTrashChrome();
+  if (trashView && !isPlayerView()) {
+    renderTrash();
+    return;
+  }
   const list = filteredNotes();
   updateSwitcherHeader();
   const s = strings();
@@ -350,6 +368,7 @@ function startRename(itemEl: HTMLElement, note: Note) {
   function commit() {
     const v = input.value.trim();
     note.title = v || strings().untitled;
+    refreshLinkersOf(note.id);
     note.updatedAt = Date.now();
     markNoteDirty(note.id);
     void persist();
@@ -364,18 +383,237 @@ function startRename(itemEl: HTMLElement, note: Note) {
   input.addEventListener("click", (ev) => ev.stopPropagation());
 }
 
+// Deleting a note moves it to the trash (see the trash section below).
 async function deleteNote(id: string) {
   const idx = notes.findIndex((n) => n.id === id);
   if (idx === -1) return;
   const [removed] = notes.splice(idx, 1);
+  moveToTrash(removed);
   if (activeId === id) {
     activeId = notes.length ? notes[0].id : null;
   }
-  void deleteNoteFromCloud(id);
-  if (removed.public) void unpublishNote(id);
   await persist();
   renderList();
   renderEditor();
+}
+
+// ---------- links between notes (see noteLinks.ts) ----------
+function linkTarget(id: string): LinkTarget | null {
+  const n = notes.find((x) => x.id === id);
+  if (n) return { title: n.title, gone: false };
+  const t = trash.find((x) => x.id === id);
+  return t ? { title: t.title, gone: true } : null;
+}
+// The public notes linking to `id` go up again: what players get of their links depends on it (its
+// title, whether it's public, whether it's there at all).
+function refreshLinkersOf(id: string) {
+  const ids = notes.filter((n) => n.public && n.id !== id && n.html.includes(`${LINK_ATTR}="${id}"`)).map((n) => n.id);
+  if (ids.length) refreshSharedCopies(ids);
+}
+function openLinkedNote(id: string) {
+  if (isPlayerView()) {
+    if (!sharedNotes.some((n) => n.id === id)) return;
+    playerActiveId = id;
+  } else {
+    if (!notes.some((n) => n.id === id)) return;
+    activeId = id;
+  }
+  renderList();
+  renderEditor();
+}
+// The bubble a link shows when clicked: open it, or why it can't be.
+const linkBubble = document.createElement("div");
+linkBubble.className = "link-bubble";
+linkBubble.hidden = true;
+panel.appendChild(linkBubble);
+function showLinkBubble(link: HTMLElement) {
+  const s = strings();
+  const id = link.getAttribute(LINK_ATTR) || "";
+  const player = isPlayerView();
+  const target = player ? (sharedNotes.find((n) => n.id === id) ? { title: "", gone: false } : null) : linkTarget(id);
+  linkBubble.innerHTML = "";
+  if (target && !target.gone) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = s.linkOpen(link.textContent || s.untitled);
+    btn.addEventListener("mousedown", (ev) => ev.preventDefault());
+    btn.addEventListener("click", () => {
+      hideLinkBubble();
+      openLinkedNote(id);
+    });
+    linkBubble.appendChild(btn);
+  } else {
+    const msg = document.createElement("span");
+    msg.textContent = target && target.gone ? s.linkTrashed : s.linkMissing;
+    linkBubble.appendChild(msg);
+  }
+  linkBubble.hidden = false;
+  const p = panel.getBoundingClientRect();
+  const r = link.getBoundingClientRect();
+  const w = linkBubble.getBoundingClientRect().width;
+  linkBubble.style.left = `${Math.max(4, Math.min(r.left - p.left, p.width - w - 4))}px`;
+  linkBubble.style.top = `${r.bottom - p.top + 4}px`;
+}
+function hideLinkBubble() {
+  linkBubble.hidden = true;
+}
+document.addEventListener("mousedown", (ev) => {
+  if (!linkBubble.hidden && !linkBubble.contains(ev.target as Node)) hideLinkBubble();
+}, true);
+// A click on a link (in the editor or the read-only view): Ctrl/Cmd+click opens it, a plain click
+// shows the bubble.
+function onLinkClick(ev: MouseEvent): boolean {
+  const link = (ev.target as HTMLElement).closest ? ((ev.target as HTMLElement).closest(".note-link") as HTMLElement | null) : null;
+  if (!link) return false;
+  ev.preventDefault();
+  if (ev.ctrlKey || ev.metaKey) {
+    hideLinkBubble();
+    openLinkedNote(link.getAttribute(LINK_ATTR) || "");
+  } else {
+    showLinkBubble(link);
+  }
+  return true;
+}
+
+// ---------- trash: deleted notes, restorable for 30 days ----------
+// A deleted note keeps its content, with the time it was deleted (deletedAt), apart from the notes.
+// With cloud sync it goes up like an edit, so other devices move it to the trash too; only emptying
+// the trash (by hand, or after 30 days) deletes it from the cloud.
+const TRASH_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+function moveToTrash(note: Note) {
+  const now = Date.now();
+  // Out of the players' sight first; restoring it doesn't share it again.
+  if (note.public) void unpublishNote(note.id);
+  delete note.public;
+  note.deletedAt = now;
+  note.updatedAt = now;
+  trash = trash.filter((t) => t.id !== note.id);
+  trash.push(note);
+  markNoteDirty(note.id);
+  refreshLinkersOf(note.id);
+}
+function daysLeft(note: Note): number {
+  return Math.max(1, Math.ceil(((note.deletedAt || 0) + TRASH_DAYS * DAY_MS - Date.now()) / DAY_MS));
+}
+function eraseFromTrash(ids: string[]) {
+  if (!ids.length) return;
+  trash = trash.filter((t) => !ids.includes(t.id));
+  ids.forEach((id) => void deleteNoteFromCloud(id));
+}
+// Returns whether it erased anything.
+function purgeExpiredTrash(): boolean {
+  const cutoff = Date.now() - TRASH_DAYS * DAY_MS;
+  const expired = trash.filter((t) => (t.deletedAt || 0) < cutoff).map((t) => t.id);
+  eraseFromTrash(expired);
+  return expired.length > 0;
+}
+async function restoreFromTrash(id: string) {
+  const note = trash.find((t) => t.id === id);
+  if (!note) return;
+  trash = trash.filter((t) => t.id !== id);
+  delete note.deletedAt;
+  note.updatedAt = Date.now();
+  notes.unshift(note);
+  markNoteDirty(id);
+  refreshLinkersOf(id);
+  activeId = id;
+  trashView = false;
+  renderList();
+  renderEditor();
+  closeDropdown();
+  await persist();
+}
+async function deleteForGood(id: string) {
+  const note = trash.find((t) => t.id === id);
+  if (!note || !window.confirm(strings().trashDeleteConfirm(note.title || strings().untitled))) return;
+  eraseFromTrash([id]);
+  if (!trash.length) trashView = false;
+  renderList();
+  await persist();
+}
+async function emptyTrash() {
+  if (!trash.length || !window.confirm(strings().trashEmptyConfirm(trash.length))) return;
+  eraseFromTrash(trash.map((t) => t.id));
+  trashView = false;
+  renderList();
+  await persist();
+}
+const trashHead = document.getElementById("trashHead") as HTMLElement;
+const trashLink = document.getElementById("trashLink") as HTMLElement;
+document.getElementById("trashLinkIcon")!.innerHTML = TRASH_ICON_PATH;
+function setTrashView(on: boolean) {
+  trashView = on;
+  searchInput.value = "";
+  searchTerm = "";
+  renderList();
+  searchInput.focus();
+}
+trashLink.addEventListener("click", () => setTrashView(true));
+document.getElementById("trashBackBtn")!.addEventListener("click", () => setTrashView(false));
+document.getElementById("trashEmptyBtn")!.addEventListener("click", () => void emptyTrash());
+// The trash's own header (instead of the "Trash (n)" link at the bottom) while it's open.
+function updateTrashChrome() {
+  const gm = !isPlayerView();
+  if (!gm || !trash.length) trashView = false;
+  trashHead.hidden = !trashView;
+  trashLink.hidden = trashView || !gm || !trash.length;
+  document.getElementById("trashLinkText")!.textContent = strings().trashLink(trash.length);
+}
+function renderTrash() {
+  const s = strings();
+  const q = searchTerm.toLowerCase();
+  const list = trash
+    .filter((n) => !q || n.title.toLowerCase().includes(q) || stripHtml(n.html).toLowerCase().includes(q))
+    .sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
+  if (!list.length) {
+    noteListEl.innerHTML = `<div class="empty-list">${escapeHtml(trash.length ? s.emptySearch : s.trashEmptyList)}</div>`;
+    return;
+  }
+  noteListEl.innerHTML = "";
+  list.forEach((n) => {
+    const item = document.createElement("div");
+    item.className = "note-item with-actions trash-item";
+    item.dataset.id = n.id;
+    const body = document.createElement("div");
+    body.className = "note-item-body";
+    const row = document.createElement("div");
+    row.className = "note-item-row";
+    const title = document.createElement("span");
+    title.className = "title";
+    title.textContent = n.title || s.untitled;
+    row.appendChild(title);
+    const snippet = document.createElement("div");
+    snippet.className = "snippet";
+    snippet.textContent = stripHtml(n.html) || s.emptyNote;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = s.trashDeletedAgo + relativeTime(n.deletedAt || n.updatedAt) + s.trashExpiresIn(daysLeft(n));
+    body.append(row, snippet, meta);
+    const restore = document.createElement("button");
+    restore.className = "row-btn restore-btn";
+    restore.title = s.trashRestoreTitle;
+    restore.setAttribute("aria-label", s.trashRestoreTitle + ": " + (n.title || s.untitled));
+    restore.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3.5 6.5h6.25a3.25 3.25 0 0 1 0 6.5H6.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M6 4 3.5 6.5 6 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    restore.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      void restoreFromTrash(n.id);
+    });
+    const del = document.createElement("button");
+    del.className = "row-btn del-btn";
+    del.title = s.trashDeleteTitle;
+    del.setAttribute("aria-label", s.trashDeleteTitle + ": " + (n.title || s.untitled));
+    del.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none">${TRASH_ICON_PATH}</svg>`;
+    del.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      void deleteForGood(n.id);
+    });
+    const actions = document.createElement("div");
+    actions.className = "row-actions trash-actions";
+    actions.append(restore, del);
+    item.append(body, actions);
+    noteListEl.appendChild(item);
+  });
 }
 
 // ---------- public notes: shared with the room's players (see cloudSync.ts, publicKey.ts) ----------
@@ -444,6 +682,7 @@ async function setNotePublic(id: string, value: boolean) {
   else delete current.public;
   current.updatedAt = Math.max(current.updatedAt, updatedAt);
   markNoteDirty(id);
+  refreshLinkersOf(id);
   await persist();
   renderList();
   updateBrandPill();
@@ -819,18 +1058,14 @@ async function importNotesFromFiles(files: FileList) {
   window.alert(strings().importSuccess(imported.length, newTemplates.length));
 }
 
-// A full, explicit reset for this room's local storage — distinct from deleting notes one at a time,
-// and from the migration step in notes.ts that already clears the OLD shared room-metadata entry on
-// its own. This clears what's stored HERE, now, for whoever's using it; pairs naturally with "export
-// all" as a manual backup-then-wipe flow.
+// Every note of this room to the trash at once (restorable for 30 days, like any deleted note).
 async function clearAllNotesWithConfirm() {
   if (!notes.length) return;
   if (!window.confirm(strings().clearAllConfirm(notes.length))) return;
-  await Promise.all(notes.map((n) => deleteNoteFromCloud(n.id)));
-  publicNotes().forEach((n) => void unpublishNote(n.id));
-  await clearAllNotes();
+  notes.forEach(moveToTrash);
   notes = [];
   activeId = null;
+  await persist();
   renderList();
   renderEditor();
   updateStorageMeter();
@@ -879,6 +1114,9 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   // typing a block to land in and Enter a block to split from the very first keystroke; the placeholder
   // still shows normally since updateEmptyState() checks textContent, not innerHTML.
   surface.innerHTML = seed.html || "<p><br></p>";
+  // Links show their notes' current titles (and which ones are gone); new titles are saved with the
+  // opening repair below, locally, without a new "edited" time.
+  const linksSynced = syncLinks(surface, linkTarget, s.untitled);
   updateEmptyState();
   updateWordCount();
 
@@ -959,6 +1197,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     const n = currentNote();
     if (!n) return;
     n.title = this.value;
+    refreshLinkersOf(n.id);
     scheduleSave();
   });
 
@@ -975,6 +1214,12 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     const value = btn.dataset.value || undefined;
     // Table cells hold inline formatting only (see updateToolbarState, which greys these out there).
     if (BLOCK_ONLY_CMDS.has(cmd) && tables.selectionInTable()) return;
+    // An item of a dropdown (the block menu, the list menu): the dropdown closes.
+    const menu = btn.closest(".pill-swatches") as HTMLElement | null;
+    if (menu) {
+      menu.hidden = true;
+      menu.parentElement?.querySelector(".pill-picker-btn")?.setAttribute("aria-expanded", "false");
+    }
     if (cmd === "toggleSecret") {
       surface.focus();
       toggleSecret();
@@ -988,9 +1233,6 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
       // Only the block type: a converted line stays in the section it's in (leaving one is the
       // indent buttons' job, see stepSection).
       setBlockType(menuValue);
-      const blockMenu = document.getElementById(idPrefix + "BlockMenu");
-      if (blockMenu) blockMenu.hidden = true;
-      document.getElementById(idPrefix + "BlockPickerBtn")?.setAttribute("aria-expanded", "false");
     } else if (cmd === "divider") {
       // A divider replaces the selection: over a collapsed section, it only expands it.
       if (!sections.unfoldSelection()) insertDivider();
@@ -1002,14 +1244,13 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
       // buttons move the line out of (or back into) the sections around it instead, same as Tab.
       const block = sel0Block();
       if (block) stepSection(block, cmd === "outdent" ? -1 : 1);
+    } else if (cmd === "insertUnorderedList" || cmd === "insertOrderedList" || cmd === "checkList") {
+      setListKind(cmd === "checkList" ? "CHECK" : cmd === "insertOrderedList" ? "OL" : "UL");
     } else {
-      // Outdenting items, or the list button turning its list off: the items are moved as they are,
-      // see outdentSelection.
-      const toggleOff = (cmd === "insertUnorderedList" || cmd === "insertOrderedList") && listIsOn(cmd === "insertUnorderedList" ? "UL" : "OL");
-      const handled = (cmd === "outdent" && outdentSelection()) || (toggleOff && unlistSelection());
-      // Chrome's list commands sometimes wrap the new list INSIDE the paragraph it converts
-      // (<p><ul>…</ul></p>); removeEditorNoise() below repairs that like any other edit.
-      if (!handled) document.execCommand(cmd, false, value);
+      // Outdenting items: they're moved as they are, see outdentSelection.
+      const handled = cmd === "outdent" && outdentSelection();
+      if (!handled) runKeepingPills(() => document.execCommand(cmd, false, value));
+      if (cmd === "indent") inheritChecklist();
     }
     removeEditorNoise();
     // Only underline/strikeThrough/removeFormat can change which spans need their decoration-line
@@ -1110,6 +1351,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   }
 
   wireDropdown(idPrefix + "BlockPickerBtn", idPrefix + "BlockMenu");
+  wireDropdown(idPrefix + "ListPickerBtn", idPrefix + "ListMenu");
   wireColorPicker(idPrefix + "PillPickerBtn", idPrefix + "PillSwatches", pillColorAtSelection, applyPillColor, removePillAtSelection);
   wireColorPicker(idPrefix + "TextColorPickerBtn", idPrefix + "TextColorSwatches", textColorAtSelection, applyTextColor, resetTextColor);
   wireColorPicker(idPrefix + "QuoteColorPickerBtn", idPrefix + "QuoteColorSwatches", quoteColorAtSelection, applyQuoteColor, removeQuote);
@@ -1618,6 +1860,21 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     return changed || misplaced;
   }
 
+  // A native list command, with the pills it would drop put back (see markPills in structure.ts).
+  // Links are made editable for the command's length: Chrome's list and indent commands duplicate a
+  // list item holding only something it can't edit. They're atomic again right after.
+  function runKeepingPills(command: () => void) {
+    const marks = markPills(surface, getTouchedBlocks());
+    const links = Array.prototype.slice.call(surface.querySelectorAll(".note-link")) as HTMLElement[];
+    links.forEach((l) => l.setAttribute("contenteditable", "true"));
+    try {
+      command();
+    } finally {
+      surface.querySelectorAll(".note-link").forEach((l) => l.setAttribute("contenteditable", "false"));
+    }
+    if (marks.length) keepingSelection(surface, () => restorePills(surface, marks));
+  }
+
   // An item of a list sitting at the top level (straight in the note, or in a quote).
   function isTopLevelItem(li: HTMLElement): boolean {
     const host = li.parentElement && li.parentElement.parentElement;
@@ -1842,6 +2099,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
 
   surface.addEventListener("paste", (ev: ClipboardEvent) => {
     ev.preventDefault();
+    snapOutOfLinks();
     // Pasting over a selection reaching into a collapsed section only expands it (see sections.ts).
     if (sections.unfoldSelection()) return;
     const own = ev.clipboardData?.getData(CLIPBOARD_TYPE) ?? "";
@@ -2178,8 +2436,41 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   // The editor's HTML minus purely view-side state, for anything saved or snapshotted: the caret
   // anchor's zero-width space and the data-folded markers applyFolding() puts on hidden blocks
   // (recomputed from each heading's data-collapsed whenever a note is shown, so never worth storing).
+  // A selection end inside a link (a double-clicked word of it, say) moves to the link's edge: the
+  // start before it, the end (or a caret past its first character) after it. Edits then never land
+  // inside a link, the editor's own insertions (paste, drop) included.
+  function snapOutOfLinks() {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !sel.anchorNode || !sel.focusNode) return;
+    const linkOf = (n: Node) => {
+      const el = n.nodeType === 3 ? n.parentElement : (n as HTMLElement);
+      const link = el && el.closest ? (el.closest(".note-link") as HTMLElement | null) : null;
+      return link && surface.contains(link) ? link : null;
+    };
+    const a = linkOf(sel.anchorNode);
+    const f = linkOf(sel.focusNode);
+    if (!a && !f) return;
+    const spot = (link: HTMLElement, after: boolean) => {
+      const parent = link.parentNode!;
+      const i = Array.prototype.indexOf.call(parent.childNodes, link) as number;
+      return { node: parent, offset: after ? i + 1 : i };
+    };
+    if (sel.isCollapsed) {
+      const p = spot(a!, sel.anchorOffset > 0);
+      sel.collapse(p.node, p.offset);
+      return;
+    }
+    const r = sel.getRangeAt(0);
+    const backward = r.startContainer === sel.focusNode && r.startOffset === sel.focusOffset && !(r.startContainer === sel.anchorNode && r.startOffset === sel.anchorOffset);
+    const startLink = linkOf(r.startContainer);
+    const endLink = linkOf(r.endContainer);
+    const s = startLink ? spot(startLink, false) : { node: r.startContainer, offset: r.startOffset };
+    const e = endLink ? spot(endLink, true) : { node: r.endContainer, offset: r.endOffset };
+    if (backward) sel.setBaseAndExtent(e.node, e.offset, s.node, s.offset);
+    else sel.setBaseAndExtent(s.node, s.offset, e.node, e.offset);
+  }
   function editorHtml(): string {
-    let html = surface.innerHTML.split(' data-folded=""').join("").split(' data-secret-in=""').join("").replace(/ data-depth="\d+"/g, "");
+    let html = surface.innerHTML.split(' data-folded=""').join("").split(' data-secret-in=""').join("").split(' data-missing=""').join("").replace(/ data-depth="\d+"/g, "");
     if (pillAnchor) html = html.split(PILL_ANCHOR).join("");
     return html;
   }
@@ -2305,6 +2596,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   if (editorSelectionListener) document.removeEventListener("selectionchange", editorSelectionListener);
   editorSelectionListener = () => {
     if (undoStack.restoring()) return;
+    snapOutOfLinks();
     const sel = window.getSelection();
     if (pillAnchor && !(sel && sel.isCollapsed && sel.anchorNode === pillAnchor)) releasePillAnchor();
     // A click (or ←) landing just after a pill: move it onto the anchor so the caret shows outside.
@@ -2359,6 +2651,234 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     });
   }).observe(surface, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["style", "color", "class"] });
   syncListMarkerColors();
+
+  // ---------- checklists ----------
+  // A checklist item's box is drawn in the gutter left of the item (its ::before): a click there
+  // checks or unchecks it, as an edit of its own.
+  surface.addEventListener("mousedown", (ev) => {
+    const li = (ev.target as HTMLElement).closest ? ((ev.target as HTMLElement).closest("li") as HTMLElement | null) : null;
+    if (!li || !surface.contains(li) || !li.parentElement || !li.parentElement.hasAttribute(CHECK_ATTR)) return;
+    if (ev.clientX >= li.getBoundingClientRect().left) return;
+    ev.preventDefault();
+    pushHistory();
+    li.toggleAttribute("data-checked");
+    const n = currentNote();
+    if (n) n.html = editorHtml();
+    scheduleSave();
+  });
+  // Enter in a checked item: Chrome copies the item, checked, to the new one. The new one (the empty
+  // one of the two, or the second half of an item split in the middle) starts unchecked.
+  function uncheckNewItem() {
+    const sel = window.getSelection();
+    const node = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+    const el = node ? (node.nodeType === 3 ? node.parentElement : (node as HTMLElement)) : null;
+    const li = el ? (el.closest("li") as HTMLElement | null) : null;
+    if (!li || !li.parentElement || !li.parentElement.hasAttribute(CHECK_ATTR)) return;
+    const prev = li.previousElementSibling as HTMLElement | null;
+    const empty = (x: HTMLElement) => !(x.textContent || "").replace(/[\s\u200b]/g, "") && !x.querySelector(".note-pill");
+    if (prev && prev.tagName === "LI" && empty(prev) && !empty(li)) prev.removeAttribute("data-checked");
+    else li.removeAttribute("data-checked");
+  }
+
+  // ---------- links: "[[" opens a picker of the room's notes ----------
+  // Typing "[[" starts a link: what follows filters the notes, ↑/↓ pick, Enter or Tab (or a click)
+  // puts the link in place of the "[[…" typed, Escape (or moving away) leaves the text as it is.
+  // One picker for the panel, reused by each editor built (one per note shown).
+  const linkPicker = (panel.querySelector(".link-picker") as HTMLElement | null) || panel.appendChild(Object.assign(document.createElement("div"), { className: "link-picker" }));
+  linkPicker.hidden = true;
+  let pickerList: Note[] = [];
+  let pickerIndex = 0;
+  let pickerDismissed: Text | null = null;
+  // The "[[" query at the caret: its text node, where the "[[" starts, and what follows it.
+  function linkQuery(): { node: Text; start: number; end: number; q: string } | null {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !sel.isCollapsed) return null;
+    const node = sel.anchorNode;
+    if (!node || node.nodeType !== 3 || !surface.contains(node)) return null;
+    const before = (node as Text).data.slice(0, sel.anchorOffset);
+    const at = before.lastIndexOf("[[");
+    if (at < 0) return null;
+    const q = before.slice(at + 2).replace(/\u00a0/g, " ");
+    if (/[\[\]\n]/.test(q) || q.length > 60) return null;
+    return { node: node as Text, start: at, end: sel.anchorOffset, q };
+  }
+  function closeLinkPicker() {
+    linkPicker.hidden = true;
+    pickerList = [];
+  }
+  function updateLinkPicker() {
+    const query = linkQuery();
+    if (!query || query.node === pickerDismissed) {
+      if (!query) pickerDismissed = null;
+      closeLinkPicker();
+      return;
+    }
+    const s = strings();
+    const q = query.q.trim().toLowerCase();
+    pickerList = notes
+      .filter((n) => n.id !== noteId && (!q || (n.title || s.untitled).toLowerCase().includes(q)))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    pickerIndex = Math.min(pickerIndex, Math.max(0, pickerList.length - 1));
+    linkPicker.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "link-picker-head";
+    head.textContent = s.linkPickerTitle;
+    linkPicker.appendChild(head);
+    if (!pickerList.length) {
+      const empty = document.createElement("div");
+      empty.className = "link-picker-empty";
+      empty.textContent = s.linkPickerEmpty;
+      linkPicker.appendChild(empty);
+    }
+    const list = document.createElement("div");
+    list.className = "link-picker-list";
+    linkPicker.appendChild(list);
+    pickerList.forEach((n, i) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "link-picker-item" + (i === pickerIndex ? " active" : "");
+      item.textContent = n.title || s.untitled;
+      item.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        chooseLink(n);
+      });
+      list.appendChild(item);
+    });
+    // Below the caret, as tall as the panel leaves room for (scrolling past that); above it when
+    // there's clearly more room there.
+    linkPicker.hidden = false;
+    linkPicker.style.maxHeight = "";
+    const caret = document.createRange();
+    caret.setStart(query.node, query.end);
+    const rect = caret.getBoundingClientRect();
+    const p = panel.getBoundingClientRect();
+    const box = linkPicker.getBoundingClientRect();
+    const below = p.bottom - rect.bottom - 10;
+    const above = rect.top - p.top - 10;
+    const up = box.height > below && above > below;
+    const room = Math.max(up ? above : below, 80);
+    linkPicker.style.maxHeight = `${room}px`;
+    const height = Math.min(box.height, room);
+    linkPicker.style.left = `${Math.max(4, Math.min(rect.left - p.left, p.width - box.width - 4))}px`;
+    linkPicker.style.top = `${up ? rect.top - p.top - 4 - height : rect.bottom - p.top + 4}px`;
+    linkPicker.querySelector(".link-picker-item.active")?.scrollIntoView({ block: "nearest" });
+  }
+  function chooseLink(n: Note) {
+    const query = linkQuery();
+    closeLinkPicker();
+    if (!query) return;
+    startEditStep();
+    const r = document.createRange();
+    r.setStart(query.node, query.start);
+    r.setEnd(query.node, query.end);
+    r.deleteContents();
+    const link = linkElement(n.id, n.title || strings().untitled);
+    const space = document.createTextNode("\u00a0");
+    r.insertNode(space);
+    r.insertNode(link);
+    const sel = window.getSelection()!;
+    sel.collapse(space, 1);
+    surface.dispatchEvent(new Event("input"));
+  }
+  // The picker's keys, while it's open. Returns whether it took the key.
+  function linkPickerKey(ev: KeyboardEvent): boolean {
+    if (linkPicker.hidden) return false;
+    if (ev.key === "Escape") {
+      pickerDismissed = linkQuery()?.node || null;
+      closeLinkPicker();
+    } else if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      if (!pickerList.length) return false;
+      pickerIndex = (pickerIndex + (ev.key === "ArrowDown" ? 1 : -1) + pickerList.length) % pickerList.length;
+      linkPicker.querySelectorAll(".link-picker-item").forEach((el, i) => el.classList.toggle("active", i === pickerIndex));
+      linkPicker.querySelector(".link-picker-item.active")?.scrollIntoView({ block: "nearest" });
+    } else if (ev.key === "Enter" || ev.key === "Tab") {
+      if (!pickerList.length) return false;
+      chooseLink(pickerList[pickerIndex]);
+    } else {
+      return false;
+    }
+    ev.preventDefault();
+    ev.stopPropagation();
+    return true;
+  }
+  // Moving the caret away from the "[[…" closes it; clicking a link shows its bubble.
+  surface.addEventListener("click", (ev) => {
+    onLinkClick(ev);
+    if (!linkPicker.hidden && !linkQuery()) closeLinkPicker();
+  });
+  surface.addEventListener("blur", () => closeLinkPicker());
+
+  // ---------- Markdown shortcuts ----------
+  // Typed at the very start of a plain paragraph (not a heading, quote, list item or cell), a
+  // Markdown marker followed by a space turns the paragraph into that block: "- " or "* " bullets,
+  // "1. " numbered, "[] " or "[ ] " a checklist, "# " to "#### " headings (#### a toggle), "> " a
+  // quote; "---" and Enter, a divider. The marker goes; whatever followed it stays, in the new block.
+  // The conversion is an undo step of its own, so Ctrl+Z right after brings the marker back as text.
+  const SHORTCUTS: [RegExp, "UL" | "OL" | "CHECK" | BlockTag][] = [
+    [/^[-*] $/, "UL"],
+    [/^1[.)] $/, "OL"],
+    [/^\[ ?\] $/, "CHECK"],
+    [/^# $/, "H1"],
+    [/^## $/, "H2"],
+    [/^### $/, "H3"],
+    [/^#### $/, "H4"],
+    [/^> $/, "BLOCKQUOTE"],
+  ];
+  // The plain top-level paragraph the (collapsed) caret is in, and the text before the caret.
+  function caretParagraph(): { block: HTMLElement; before: string; range: Range } | null {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !sel.isCollapsed) return null;
+    const r = sel.getRangeAt(0);
+    const block = blockAt(r.startContainer);
+    if (!block || block.tagName !== "P") return null;
+    const head = document.createRange();
+    head.setStart(block, 0);
+    head.setEnd(r.startContainer, r.startOffset);
+    return { block, before: head.toString().replace(/\u00a0/g, " ").replace(/\u200b/g, ""), range: head };
+  }
+  function markdownShortcut() {
+    const at = caretParagraph();
+    if (!at) return;
+    const match = SHORTCUTS.find(([re]) => re.test(at.before));
+    if (!match) return;
+    const kind = match[1];
+    // The marker, typed, is what Ctrl+Z goes back to.
+    startEditStep();
+    at.range.deleteContents();
+    if (!at.block.hasChildNodes() || !(at.block.textContent || "").length) {
+      if (!at.block.querySelector("br")) at.block.appendChild(document.createElement("br"));
+    }
+    placeCaretAtStart(at.block);
+    secretSnapshot();
+    if (kind === "UL" || kind === "OL" || kind === "CHECK") setListKind(kind);
+    else setBlockType(kind);
+    removeEditorNoise();
+    const hid = guardSecret();
+    const n = currentNote();
+    if (n) n.html = editorHtml();
+    scheduleSave();
+    if (hid) pushSecretNow();
+    updateEmptyState();
+    updateToolbarState();
+  }
+  // "---" alone in a plain paragraph, then Enter: a divider there, and the caret on an empty line
+  // after it.
+  function dividerShortcut(): boolean {
+    const at = caretParagraph();
+    if (!at || at.before !== "---" || (at.block.textContent || "").replace(/\u200b/g, "") !== "---") return false;
+    startEditStep();
+    const hr = document.createElement("hr");
+    if (at.block.hasAttribute(SECRET_ATTR)) hr.setAttribute(SECRET_ATTR, "");
+    at.block.before(hr);
+    at.block.innerHTML = "<br>";
+    placeCaretAtStart(at.block);
+    const n = currentNote();
+    if (n) n.html = editorHtml();
+    scheduleSave();
+    updateEmptyState();
+    updateToolbarState();
+    return true;
+  }
 
   // ---------- parts hidden from players (see secret.ts) ----------
   // The GM sees them striped: data-secret on a block hidden itself, data-secret-in (view-side only,
@@ -2591,7 +3111,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   // the cloud. A fresh time would make this device's copy "newer" than an edit made on another
   // device that hasn't arrived here yet (cloud sync is last-write-wins), so merely opening a note
   // could overwrite that edit. The repaired version reaches the cloud with the next real edit.
-  if (repairStructure()) {
+  if (repairStructure() || linksSynced) {
     seed.html = editorHtml();
     void persist();
   }
@@ -2636,6 +3156,9 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     if (!(ev as InputEvent).isComposing) repairStructure();
     ensureBlockWrapper();
     if (pillAnchor && pillAnchor.data !== PILL_ANCHOR) releasePillAnchor();
+    if ((ev as InputEvent).inputType === "insertParagraph") uncheckNewItem();
+    if ((ev as InputEvent).inputType === "insertText" && (ev as InputEvent).data === " ") markdownShortcut();
+    updateLinkPicker();
     const hid = guardSecret();
     drawSecret();
     const n = currentNote();
@@ -2652,6 +3175,8 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     scheduleSave();
   });
   surface.addEventListener("keydown", (ev) => {
+    snapOutOfLinks();
+    if (linkPickerKey(ev)) return;
     const key = ev.key.toLowerCase();
     const isUndo = (ev.ctrlKey || ev.metaKey) && !ev.shiftKey && key === "z";
     const isRedo = (ev.ctrlKey || ev.metaKey) && (key === "y" || (ev.shiftKey && key === "z"));
@@ -2688,6 +3213,10 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
       if (edge && edge.inside) caretAfterPill(edge.pill);
     }
     if (tables.handleEnter(ev)) return;
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey && dividerShortcut()) {
+      ev.preventDefault();
+      return;
+    }
     if (ev.key === "Enter") {
       const sel = window.getSelection();
       const block = sel && sel.rangeCount ? blockAt(sel.getRangeAt(0).startContainer) : null;
@@ -2744,7 +3273,8 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     ev.preventDefault();
     pushHistory();
     secretSnapshot();
-    if (!(ev.shiftKey && outdentSelection())) document.execCommand(ev.shiftKey ? "outdent" : "indent", false, undefined);
+    if (!(ev.shiftKey && outdentSelection())) runKeepingPills(() => document.execCommand(ev.shiftKey ? "outdent" : "indent", false, undefined));
+    if (!ev.shiftKey) inheritChecklist();
     repairStructure();
     const hid = guardSecret();
     const n = currentNote();
@@ -2786,14 +3316,48 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     };
     return inItem(r.startContainer) || inItem(r.endContainer);
   }
-  // Whether the list button for `tag` lists is "on" here: the selection is all list content, every
-  // selected item in a list of that kind. (queryCommandState misread some nested selections.)
-  function listIsOn(tag: "UL" | "OL"): boolean {
+  // Whether the list menu's `kind` is "on" here: the selection is all list content, every selected
+  // item in a list of that kind. (queryCommandState misread some nested selections.)
+  function listIsOn(kind: ListKind): boolean {
     const sel = window.getSelection();
     if (!sel || !sel.rangeCount) return false;
     const items = selectedItems(sel.getRangeAt(0));
-    const onlyLists = getTouchedBlocks().every((b) => /^(UL|OL)$/.test(b.tagName) || (b.tagName === "BLOCKQUOTE" && !!b.querySelector("li")));
-    return items.length > 0 && onlyLists && items.every((li) => li.parentElement!.tagName === tag);
+    return items.length > 0 && onlyListsSelected() && items.every((li) => listKind(li.parentElement!) === kind);
+  }
+  function onlyListsSelected(): boolean {
+    return getTouchedBlocks().every((b) => /^(UL|OL)$/.test(b.tagName) || (b.tagName === "BLOCKQUOTE" && !!b.querySelector("li")));
+  }
+  // The list menu: picking the kind the selection already is takes the list away (moving the items
+  // as they are, see unlistSelection). A checklist is a bullet list marked data-check, so between
+  // those two only the mark changes; anything else goes through Chrome's list commands (pills kept,
+  // see runKeepingPills), and the lists the selection ends up in get the right mark.
+  function setListKind(kind: ListKind) {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return;
+    if (listIsOn(kind) && unlistSelection()) return;
+    const items = selectedItems(sel.getRangeAt(0));
+    const lists = Array.from(new Set(items.map((li) => li.parentElement!)));
+    if (kind !== "OL" && items.length && onlyListsSelected() && lists.every((l) => l.tagName === "UL")) {
+      lists.forEach((l) => l.toggleAttribute(CHECK_ATTR, kind === "CHECK"));
+      return;
+    }
+    // Plain bullet lists for Chrome: it copies what it sees, and a checked item's gray would come
+    // out as a fixed color on its text.
+    lists.forEach((l) => l.removeAttribute(CHECK_ATTR));
+    runKeepingPills(() => document.execCommand(kind === "OL" ? "insertOrderedList" : "insertUnorderedList", false, undefined));
+    const after = window.getSelection();
+    if (!after || !after.rangeCount) return;
+    selectedItems(after.getRangeAt(0)).forEach((li) => li.parentElement!.toggleAttribute(CHECK_ATTR, kind === "CHECK"));
+  }
+  // A sub-list made inside a checklist (Tab, Increase indent) is a checklist too.
+  function inheritChecklist() {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return;
+    selectedItems(sel.getRangeAt(0)).forEach((li) => {
+      const list = li.parentElement!;
+      const outer = list.parentElement && list.parentElement.closest("ul, ol");
+      if (list.tagName === "UL" && outer && outer.hasAttribute(CHECK_ATTR) && surface.contains(outer)) list.setAttribute(CHECK_ATTR, "");
+    });
   }
   function updateEmptyState() {
     // No text AND no text-less structure (a list item, divider or quote), which the placeholder,
@@ -2821,7 +3385,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     }, 250);
   }
   function updateToolbarState() {
-    const cmds = ["bold", "italic", "underline", "strikeThrough", "insertUnorderedList", "insertOrderedList"];
+    const cmds = ["bold", "italic", "underline", "strikeThrough"];
     cmds.forEach((cmd) => {
       const b = document.querySelector(`#${idPrefix}Toolbar button[data-cmd="${cmd}"]`);
       if (!b) return;
@@ -2839,6 +3403,19 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     document.querySelectorAll(`#${idPrefix}Toolbar button[data-cmd="formatBlock"]`).forEach((b) => {
       b.classList.toggle("active", (b as HTMLElement).dataset.value!.toUpperCase() === menuTag);
     });
+    // The list menu: lit while in any list, its item for the list's kind marked. Read from the DOM
+    // (see caretInList).
+    const listSel = window.getSelection();
+    const listStart = listSel && listSel.rangeCount ? listSel.getRangeAt(0).startContainer : null;
+    const listEl = listStart ? ((listStart.nodeType === 3 ? listStart.parentElement : (listStart as HTMLElement))?.closest("li") as HTMLElement | null) : null;
+    const listTag = listEl && surface.contains(listEl) && !listEl.closest("td, th") ? listEl.parentElement!.tagName : "";
+    document.getElementById(idPrefix + "ListPickerBtn")?.classList.toggle("active", !!listTag);
+    document.querySelectorAll(`#${idPrefix}ListMenu button[data-cmd]`).forEach((b) => {
+      const cmd = (b as HTMLElement).dataset.cmd;
+      const kind = listEl && listTag ? listKind(listEl.parentElement!) : null;
+      b.classList.toggle("active", (cmd === "insertUnorderedList" && kind === "UL") || (cmd === "insertOrderedList" && kind === "OL") || (cmd === "checkList" && kind === "CHECK"));
+    });
+
     const blockLabel = document.getElementById(idPrefix + "BlockPickerLabel");
     if (blockLabel) blockLabel.textContent = (BLOCK_TYPES.find((t) => t.tag === menuTag) || BLOCK_TYPES[0]).short;
 
@@ -2866,6 +3443,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
       ...(Array.prototype.slice.call(document.querySelectorAll(`#${idPrefix}Toolbar > button[data-cmd]`)) as HTMLElement[])
         .filter((b) => BLOCK_ONLY_CMDS.has(b.dataset.cmd!)),
       document.getElementById(idPrefix + "BlockPickerBtn"),
+      document.getElementById(idPrefix + "ListPickerBtn"),
       quoteColorBtnEl,
     ] as (HTMLElement | null)[];
     blockTools.forEach((b) => {
@@ -2931,7 +3509,7 @@ function stopSharedView() {
 
 // What the viewer shows, so a live update that changed nothing visible (another note, say) doesn't
 // redraw it; and per note, the sections the player folded or unfolded, kept across the GM's edits.
-let shownShared: { id: string; title: string; html: string; language: Language } | null = null;
+let shownShared: { id: string; title: string; html: string; language: Language; links: string } | null = null;
 const playerFolds = new Map<string, Map<string, boolean>>();
 function headingKeys(surface: HTMLElement): [HTMLElement, string][] {
   const seen = new Map<string, number>();
@@ -2950,7 +3528,9 @@ function renderSharedNote() {
     editorPaneEl.innerHTML = `<div class="editor-empty">${escapeHtml(sharedEmptyMessage())}</div>`;
     return;
   }
-  if (shownShared && shownShared.id === note.id && shownShared.title === note.title && shownShared.html === note.html && shownShared.language === language) return;
+  // Its links show the linked notes' titles, so a renamed (or unshared) one redraws it too.
+  const links = linkedIds(note.html).map((id) => sharedNotes.find((n) => n.id === id)?.title ?? "\u0000").join("\u0001");
+  if (shownShared && shownShared.id === note.id && shownShared.title === note.title && shownShared.html === note.html && shownShared.language === language && shownShared.links === links) return;
   const prevScroll = shownShared && shownShared.id === note.id ? editorPaneEl.querySelector(".editor-scroll")?.scrollTop ?? 0 : 0;
   editorPaneEl.innerHTML =
     `<div class="title-row"><div class="note-title-text"></div></div>` +
@@ -2959,6 +3539,16 @@ function renderSharedNote() {
   const surface = editorPaneEl.querySelector(".editor-surface") as HTMLElement;
   // Already sanitized on arrival (watchSharedNotes).
   surface.innerHTML = note.html;
+  // A link to a note that isn't shared (any more) is just its text, as the note's next upload will
+  // have it anyway.
+  surface.querySelectorAll(".note-link").forEach((l) => {
+    if (!sharedNotes.some((n) => n.id === l.getAttribute(LINK_ATTR))) l.replaceWith(document.createTextNode(l.textContent || ""));
+  });
+  syncLinks(surface, (id) => {
+    const target = sharedNotes.find((n) => n.id === id);
+    return target ? { title: target.title, gone: false } : null;
+  }, s.untitled);
+  surface.addEventListener("click", onLinkClick);
   const folds = playerFolds.get(note.id);
   if (folds) {
     headingKeys(surface).forEach(([h, key]) => {
@@ -2981,7 +3571,7 @@ function renderSharedNote() {
   });
   sections.applyFolding();
   editorPaneEl.querySelector(".editor-scroll")!.scrollTop = prevScroll;
-  shownShared = { id: note.id, title: note.title, html: note.html, language };
+  shownShared = { id: note.id, title: note.title, html: note.html, language, links };
 }
 
 // ---------- GM note switcher dropdown ----------
@@ -3297,6 +3887,11 @@ function applyLanguage() {
   document.getElementById("exportAllBtn")!.textContent = s.exportAllBtn;
   document.getElementById("importBtn")!.textContent = s.importBtn;
   document.getElementById("clearAllBtn")!.textContent = s.clearAllBtn;
+  document.getElementById("trashHeadTitle")!.textContent = s.trashTitle;
+  const trashBackBtn = document.getElementById("trashBackBtn")!;
+  trashBackBtn.title = s.trashBack;
+  trashBackBtn.setAttribute("aria-label", s.trashBack);
+  document.getElementById("trashEmptyBtn")!.textContent = s.trashEmptyBtn;
   document.getElementById("settingsCloudLabel")!.textContent = s.settingsCloudLabel;
   document.getElementById("cloudSyncHint")!.textContent = s.cloudSyncHint;
   document.getElementById("cloudSignInBtn")!.textContent = s.cloudSignInBtn;
@@ -3460,35 +4055,43 @@ function applyRoleView() {
 // arriving. Re-rendering the editor when the ACTIVE note changes is a deliberate simplification: it
 // mirrors how switching notes already re-renders from scratch, at the small cost of a visible refresh
 // if a remote update happens to land in the same instant as active typing here.
+// A note in the trash (deletedAt) goes to the trash here too, and one restored elsewhere comes back.
 function mergeCloudNotes(cloudNotes: Note[], removedIds: string[]) {
   let listChanged = false;
   let activeNoteChanged = false;
-  removedIds.forEach((id) => {
+  // Takes a note out of wherever it is here (the notes or the trash).
+  const take = (id: string) => {
     const idx = notes.findIndex((n) => n.id === id);
-    if (idx === -1) return;
-    notes.splice(idx, 1);
-    listChanged = true;
-    if (activeId === id) {
-      activeId = notes.length ? notes[0].id : null;
-      activeNoteChanged = true;
+    if (idx !== -1) {
+      notes.splice(idx, 1);
+      if (activeId === id) {
+        activeId = notes.length ? notes[0].id : null;
+        activeNoteChanged = true;
+      }
     }
+    trash = trash.filter((t) => t.id !== id);
+  };
+  removedIds.forEach((id) => {
+    if (!notes.some((n) => n.id === id) && !trash.some((t) => t.id === id)) return;
+    take(id);
+    listChanged = true;
   });
   cloudNotes.forEach((cloudNote) => {
-    const idx = notes.findIndex((n) => n.id === cloudNote.id);
-    if (idx === -1) {
-      notes.push(cloudNote);
-      listChanged = true;
-    } else if (cloudNote.updatedAt > notes[idx].updatedAt) {
-      notes[idx] = cloudNote;
+    const local = notes.find((n) => n.id === cloudNote.id) || trash.find((t) => t.id === cloudNote.id);
+    if (!local || cloudNote.updatedAt > local.updatedAt) {
+      if (local) take(cloudNote.id);
+      if (typeof cloudNote.deletedAt === "number") trash.push(cloudNote);
+      else notes.push(cloudNote);
       listChanged = true;
       if (activeId === cloudNote.id) activeNoteChanged = true;
-    } else if (cloudNote.updatedAt < notes[idx].updatedAt) {
+    } else if (cloudNote.updatedAt < local.updatedAt) {
       // Changed here while signed out (or before the last push went through): the account's copy is
       // behind, so it goes up now. Otherwise another device would keep the old version, and with it,
       // say, a note still public that was unpublished here.
       markNoteDirty(cloudNote.id);
     }
   });
+  if (purgeExpiredTrash()) listChanged = true;
   if (!listChanged) return;
   void persist();
   renderList();
@@ -3535,6 +4138,12 @@ async function boot() {
   secretEyeLocked = initialEyeLocked;
   notes = initialNotes;
   try {
+    trash = await getTrash();
+  } catch (err) {
+    console.error("Notes: failed to load the trash", err);
+  }
+  if (purgeExpiredTrash()) void persist();
+  try {
     publicKey = await getPublicKey();
   } catch (err) {
     console.error("Notes: failed to read the room's public key", err);
@@ -3559,7 +4168,7 @@ async function boot() {
 
   if (cloudSyncAvailable()) {
     currentRoomIdForCloud = OBR.room.id;
-    startCloudSync(currentRoomIdForCloud, (id) => notes.find((n) => n.id === id), updateSyncIndicator, applyCloudAuthState);
+    startCloudSync(currentRoomIdForCloud, (id) => notes.find((n) => n.id === id) || trash.find((t) => t.id === id), updateSyncIndicator, applyCloudAuthState);
   }
 
   watchPublicKey(applyPublicKey);

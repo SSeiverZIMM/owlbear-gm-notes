@@ -126,6 +126,9 @@ export async function publishNote(note: Note): Promise<void> {
   if (!impl) throw new Error("Notes: cloud sync isn't loaded");
   await impl.publishNote(note);
 }
+export function refreshSharedCopies(ids: string[]) {
+  impl?.refreshSharedCopies(ids);
+}
 export async function unpublishNote(noteId: string): Promise<void> {
   if (impl) await impl.unpublishNote(noteId);
 }

@@ -1,6 +1,6 @@
 ---
 title: GM Notes
-description: Keep your prep, secrets and stat blocks one click away — a GM journal with tables, folding sections, templates, and notes you can share with players.
+description: Keep prep, secrets and stat blocks one click away — a GM journal with tables, folding sections, templates and player sharing.
 author: Ignacio Pedraza
 image: https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/header.png
 icon: https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/public/logo.svg

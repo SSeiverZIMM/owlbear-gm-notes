@@ -44,20 +44,20 @@ body{
 .panel *{ box-sizing:border-box; }
 .panel :focus-visible{ outline:2px solid var(--primary-main); outline-offset:-1px; border-radius:6px; }
 
-.note-list, .editor-scroll, .pill-swatches, .settings-modal-body, .editor-surface table{
+.note-list, .editor-scroll, .pill-swatches, .settings-modal-body, .editor-surface table, .link-picker-list{
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent) transparent;
 }
-.note-list::-webkit-scrollbar, .editor-scroll::-webkit-scrollbar, .settings-modal-body::-webkit-scrollbar{ width:8px; }
+.note-list::-webkit-scrollbar, .editor-scroll::-webkit-scrollbar, .settings-modal-body::-webkit-scrollbar, .link-picker-list::-webkit-scrollbar{ width:8px; }
 .pill-swatches::-webkit-scrollbar, .editor-surface table::-webkit-scrollbar{ height:8px; }
-.note-list::-webkit-scrollbar-track, .editor-scroll::-webkit-scrollbar-track, .pill-swatches::-webkit-scrollbar-track, .settings-modal-body::-webkit-scrollbar-track, .editor-surface table::-webkit-scrollbar-track{
+.note-list::-webkit-scrollbar-track, .link-picker-list::-webkit-scrollbar-track, .editor-scroll::-webkit-scrollbar-track, .pill-swatches::-webkit-scrollbar-track, .settings-modal-body::-webkit-scrollbar-track, .editor-surface table::-webkit-scrollbar-track{
   background:transparent;
 }
-.note-list::-webkit-scrollbar-thumb, .editor-scroll::-webkit-scrollbar-thumb, .pill-swatches::-webkit-scrollbar-thumb, .settings-modal-body::-webkit-scrollbar-thumb, .editor-surface table::-webkit-scrollbar-thumb{
+.note-list::-webkit-scrollbar-thumb, .link-picker-list::-webkit-scrollbar-thumb, .editor-scroll::-webkit-scrollbar-thumb, .pill-swatches::-webkit-scrollbar-thumb, .settings-modal-body::-webkit-scrollbar-thumb, .editor-surface table::-webkit-scrollbar-thumb{
   background-color: color-mix(in srgb, var(--text-primary) 20%, transparent);
   border-radius:4px;
 }
-.note-list::-webkit-scrollbar-thumb:hover, .editor-scroll::-webkit-scrollbar-thumb:hover, .pill-swatches::-webkit-scrollbar-thumb:hover, .settings-modal-body::-webkit-scrollbar-thumb:hover, .editor-surface table::-webkit-scrollbar-thumb:hover{
+.note-list::-webkit-scrollbar-thumb:hover, .link-picker-list::-webkit-scrollbar-thumb:hover, .editor-scroll::-webkit-scrollbar-thumb:hover, .pill-swatches::-webkit-scrollbar-thumb:hover, .settings-modal-body::-webkit-scrollbar-thumb:hover, .editor-surface table::-webkit-scrollbar-thumb:hover{
   background-color: color-mix(in srgb, var(--text-primary) 32%, transparent);
 }
 
@@ -136,6 +136,8 @@ body{
   font-family:var(--font-ui); font-size:12.5px; width:100%;
 }
 .search-wrap input::placeholder{ color:var(--text-disabled); }
+/* The search box is its own focus cue (its caret); no ring around it inside the dropdown. */
+.search-wrap input:focus-visible{ outline:none; }
 
 .note-list{ flex:1; overflow-y:auto; padding:5px; display:flex; flex-direction:column; gap:2px; }
 .note-item{
@@ -168,6 +170,30 @@ body{
 .note-item:hover .row-btn, .note-item:focus-within .row-btn{ opacity:1; }
 .row-btn.export-btn:hover, .row-btn.edit-btn:hover, .row-btn.template-btn:hover{ background:color-mix(in srgb, var(--primary-main) 20%, transparent); color:var(--primary-light); }
 .row-btn.del-btn:hover{ background:rgba(224,90,90,.18); color:#e05a5a; }
+.row-btn.restore-btn:hover{ background:color-mix(in srgb, var(--primary-main) 20%, transparent); color:var(--primary-light); }
+/* The trash (see main.ts): a link at the bottom of the note list, and its own header while open. */
+.trash-actions{ grid-template-columns:repeat(2, 24px); }
+.trash-item{ cursor:default; }
+.trash-item .row-btn{ opacity:1; }
+.trash-link{
+  flex:0 0 auto; display:flex; align-items:center; gap:6px; padding:7px 12px; border:0; border-top:1px solid var(--divider);
+  background:transparent; color:var(--text-secondary); font:inherit; font-size:11.5px; cursor:pointer; text-align:left;
+}
+.trash-link:hover{ background:color-mix(in srgb, var(--text-primary) 6%, transparent); color:var(--text-primary); }
+.trash-head{
+  flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding:6px 8px; border-bottom:1px solid var(--divider);
+}
+.trash-back{
+  display:flex; align-items:center; gap:5px; padding:3px 6px; border:0; border-radius:6px; background:transparent;
+  color:var(--text-primary); font:inherit; font-size:12px; font-weight:600; cursor:pointer;
+}
+.trash-back:hover{ background:color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.trash-empty-btn{
+  padding:3px 8px; border:1px solid var(--divider); border-radius:6px; background:transparent;
+  color:var(--text-secondary); font:inherit; font-size:11px; cursor:pointer;
+}
+.trash-empty-btn:hover{ background:rgba(224,90,90,.18); color:#e05a5a; border-color:rgba(224,90,90,.4); }
 .note-item .rename-input{
   font:inherit; font-size:12.5px; font-weight:600; color:var(--text-primary);
   background:var(--bg-default); border:1px solid var(--primary-main); border-radius:5px;
@@ -243,6 +269,10 @@ body{
   font-weight:400; font-size:12.5px; color:var(--text-primary); white-space:nowrap;
 }
 .toolbar .block-menu button.active{ color:var(--primary-light); }
+/* The list menu: each kind with its icon. */
+.toolbar .list-menu button{ gap:8px; }
+.toolbar .list-menu button svg{ flex:0 0 auto; width:15px; height:15px; color:var(--text-secondary); }
+.toolbar .list-menu button.active svg{ color:var(--primary-light); }
 .toolbar .block-menu .block-item-h1{ font-size:15px; font-weight:700; }
 .toolbar .block-menu .block-item-h2{ font-size:13.5px; font-weight:700; }
 .toolbar .block-menu .block-item-h3{ font-size:12.5px; font-weight:700; }
@@ -349,6 +379,52 @@ body{
 .editor-surface ul > li::marker{ content:"\2022\2006"; font-size:1.3em; }
 .editor-surface ul ul > li::marker{ content:"\25E6\2006"; }
 .editor-surface ul ul ul > li::marker{ content:"\25AA\2006"; }
+/* Links between notes (see noteLinks.ts): atomic, in the accent color, dotted underline; a link
+   whose note is gone is gray. */
+.editor-surface .note-link{
+  color:var(--primary-light); text-decoration:underline dotted; text-underline-offset:2px; cursor:pointer;
+  border-radius:3px; padding:0 1px; user-select:all;
+}
+.editor-surface .note-link:hover{ background:color-mix(in srgb, var(--primary-main) 16%, transparent); }
+.editor-surface .note-link[data-missing]{ color:var(--text-disabled); }
+/* The "[[" picker and a link's bubble, floating over the panel. */
+.link-picker, .link-bubble{
+  position:absolute; z-index:45; background:var(--bg-solid); border:1px solid var(--divider); border-radius:8px;
+  box-shadow:0 12px 30px -10px rgba(0,0,0,.55); font-family:var(--font-ui);
+}
+.link-picker{ min-width:180px; max-width:260px; padding:4px; display:flex; flex-direction:column; gap:1px; }
+.link-picker-list{ flex:1 1 auto; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:1px; }
+.link-picker-head{ flex:0 0 auto; padding:3px 8px 4px; font-size:10px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--text-disabled); }
+.link-picker-empty{ padding:4px 8px 6px; font-size:12px; color:var(--text-secondary); }
+.link-picker-item{
+  flex:0 0 auto; border:0; background:transparent; text-align:left; padding:5px 8px; border-radius:5px; cursor:pointer;
+  font:inherit; font-size:12.5px; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.link-picker-item:hover, .link-picker-item.active{ background:color-mix(in srgb, var(--primary-main) 20%, transparent); color:var(--primary-light); }
+.link-bubble{ padding:4px; font-size:12px; color:var(--text-secondary); }
+.link-bubble span{ display:block; padding:4px 8px; }
+.link-bubble button{
+  border:0; background:transparent; padding:5px 8px; border-radius:5px; cursor:pointer;
+  font:inherit; font-size:12.5px; color:var(--primary-light); max-width:240px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.link-bubble button:hover{ background:color-mix(in srgb, var(--primary-main) 20%, transparent); }
+/* Checklists (a bullet list marked data-check): a box in the gutter instead of the bullet, in the
+   line's marker color; checked, it's filled and the item goes gray. A click on the box toggles it
+   (see main.ts); read-only views just show it. */
+.editor-surface ul[data-check]{ padding-left:1.35em; }
+.editor-surface ul[data-check] > li{ list-style:none; position:relative; }
+.editor-surface ul[data-check] > li::marker{ content:""; }
+.editor-surface ul[data-check] > li::before{
+  content:""; position:absolute; left:-1.3em; top:calc(.825em - 6.5px); width:13px; height:13px; box-sizing:border-box;
+  border:1.5px solid var(--marker-c, var(--text-secondary)); border-radius:3px; cursor:pointer;
+}
+.editor-surface ul[data-check] > li[data-checked]::before{
+  border-color:var(--primary-main);
+  background:var(--primary-main) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M3.5 8.5l3 3 6-7' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/></svg>") center / 10px no-repeat;
+}
+.editor-surface ul[data-check] > li[data-checked]{ color:var(--text-disabled); }
+.editor-surface ul[data-check] > li[data-checked] .note-pill{ opacity:.55; }
+.editor-surface.read-only ul[data-check] > li::before{ cursor:default; }
 /* Numbered lists: 1. / a. / i. per nesting level (then repeating), a bit smaller than the text. */
 .editor-surface ol > li::marker{ content:counter(list-item) ".\2005"; font-size:.9em; }
 .editor-surface ol ol > li::marker{ content:counter(list-item, lower-alpha) ".\2005"; }

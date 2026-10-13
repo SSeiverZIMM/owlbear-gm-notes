@@ -1,6 +1,7 @@
 import { initializeApp, type FirebaseApp } from "firebase/app";
 import { sanitizeNoteHtml } from "./sanitizeHtml";
 import { stripSecret } from "./secret";
+import { publicLinks } from "./noteLinks";
 import {
   getAuth,
   GoogleAuthProvider,
@@ -142,9 +143,14 @@ export function setSharedKey(key: string | null) {
 function sharedNoteDoc(key: string, noteId: string) {
   return doc(db!, "shared", key, "notes", noteId);
 }
-// The public copy: the note minus its hidden parts, which never leave the GM's own copies.
+// The public copy: the note minus its hidden parts, which never leave the GM's own copies, and with
+// links only to notes players can see (the others are just their titles, see noteLinks.ts).
 function sharedNoteData(note: Note, uid: string) {
-  return { title: note.title, html: stripSecret(note.html), updatedAt: note.updatedAt, owner: uid };
+  const html = publicLinks(stripSecret(note.html), (id) => {
+    const target = getNoteById ? getNoteById(id) : undefined;
+    return target && typeof target.deletedAt !== "number" ? { title: target.title, public: !!target.public } : null;
+  });
+  return { title: note.title, html, updatedAt: note.updatedAt, owner: uid };
 }
 // The version of each public copy last written from here ("key/noteId" → updatedAt): the flush that
 // follows a publish finds it already up and skips it.
@@ -239,6 +245,15 @@ export async function reconcileSharedNotes(key: string, wanted: () => Note[]): P
   }
 }
 
+/** Public notes whose copy has to go up again although they didn't change: a note they link to was
+ * shared, unshared, renamed or deleted. */
+export function refreshSharedCopies(ids: string[]) {
+  ids.forEach((id) => {
+    if (sharedKey) sharedVersions.delete(sharedKey + "/" + id);
+    markNoteDirty(id);
+  });
+}
+
 export function markNoteDirty(noteId: string) {
   if (!cloudSyncAvailable() || !getCurrentUser()) return;
   dirtyIds.add(noteId);
@@ -262,7 +277,7 @@ export async function flushCloudSync(): Promise<void> {
     await Promise.all(
       ids.map((id) => {
         const note = getNoteById!(id);
-        // Deleted locally between markNoteDirty() and this flush — deleteNoteFromCloud() already
+        // Deleted for good between markNoteDirty() and this flush — deleteNoteFromCloud() already
         // handles removing it from Firestore directly, so there's nothing to push for this id.
         if (!note) return Promise.resolve();
         return Promise.all([
@@ -271,6 +286,8 @@ export async function flushCloudSync(): Promise<void> {
             html: note.html,
             updatedAt: note.updatedAt,
             public: !!note.public,
+            // In the trash: other devices move it there too.
+            ...(typeof note.deletedAt === "number" ? { deletedAt: note.deletedAt } : {}),
           }),
           note.public && sharedKey && sharedVersions.get(sharedKey + "/" + id) !== note.updatedAt
             ? writeSharedNote(sharedKey, note, user.uid)
@@ -322,13 +339,14 @@ export function watchCloudNotes(
         if (change.type === "removed") {
           removedIds.push(change.doc.id);
         } else {
-          const data = change.doc.data() as { title?: unknown; html?: unknown; updatedAt?: unknown; public?: unknown };
+          const data = change.doc.data() as { title?: unknown; html?: unknown; updatedAt?: unknown; public?: unknown; deletedAt?: unknown };
           notes.push({
             id: change.doc.id,
             title: typeof data.title === "string" ? data.title : "",
             html: typeof data.html === "string" ? sanitizeNoteHtml(data.html) : "",
             updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : Date.now(),
             ...(data.public === true ? { public: true } : {}),
+            ...(typeof data.deletedAt === "number" ? { deletedAt: data.deletedAt } : {}),
           });
         }
       });

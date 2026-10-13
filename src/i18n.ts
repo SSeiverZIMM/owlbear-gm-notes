@@ -49,7 +49,9 @@ export interface ToolbarStrings {
   tableHeaderRow: string;
   tableHeaderCol: string;
   tableDelete: string;
+  listMenu: string;
   bulletList: string;
+  checkList: string;
   numberList: string;
   outdent: string;
   indent: string;
@@ -70,6 +72,17 @@ export interface Strings {
   renameTitle: string;
   renameAria: string;
   deleteTitle: string;
+  trashLink: (n: number) => string;
+  trashTitle: string;
+  trashBack: string;
+  trashEmptyBtn: string;
+  trashEmptyConfirm: (n: number) => string;
+  trashEmptyList: string;
+  trashRestoreTitle: string;
+  trashDeleteTitle: string;
+  trashDeleteConfirm: (title: string) => string;
+  trashDeletedAgo: string;
+  trashExpiresIn: (days: number) => string;
   deleteAria: string;
   editedAgo: string;
   timeNow: string;
@@ -99,6 +112,11 @@ export interface Strings {
   resizeTitle: string;
   settingsClose: string;
   settingsInfo: string;
+  linkPickerTitle: string;
+  linkPickerEmpty: string;
+  linkOpen: (title: string) => string;
+  linkTrashed: string;
+  linkMissing: string;
   settingsAccentLabel: string;
   settingsLangLabel: string;
   settingsHelpLabel: string;
@@ -177,7 +195,18 @@ const STRINGS: Record<Language, Strings> = {
     emptyNote: "Nota vacía",
     renameTitle: "Renombrar nota",
     renameAria: "Renombrar ",
-    deleteTitle: "Eliminar nota",
+    deleteTitle: "Mover a la papelera",
+    trashLink: (n) => `Papelera (${n})`,
+    trashTitle: "Papelera",
+    trashBack: "Volver a las notas",
+    trashEmptyBtn: "Vaciar papelera",
+    trashEmptyConfirm: (n) => (n === 1 ? "¿Eliminar para siempre la nota de la papelera? No se puede deshacer." : `¿Eliminar para siempre las ${n} notas de la papelera? No se puede deshacer.`),
+    trashEmptyList: "La papelera está vacía.",
+    trashRestoreTitle: "Restaurar",
+    trashDeleteTitle: "Eliminar para siempre",
+    trashDeleteConfirm: (title) => `¿Eliminar para siempre “${title}”? No se puede deshacer.`,
+    trashDeletedAgo: "borrada hace ",
+    trashExpiresIn: (d) => (d <= 1 ? " · último día" : ` · quedan ${d} días`),
     deleteAria: "Eliminar ",
     editedAgo: "editado hace ",
     timeNow: "ahora",
@@ -207,6 +236,11 @@ const STRINGS: Record<Language, Strings> = {
     resizeTitle: "Redimensionar panel (doble clic: tamaño por defecto)",
     settingsClose: "Cerrar",
     settingsInfo: "Más información",
+    linkPickerTitle: "Enlazar a una nota",
+    linkPickerEmpty: "Ninguna nota coincide",
+    linkOpen: (t) => `Abrir «${t}»`,
+    linkTrashed: "Esta nota está en la papelera",
+    linkMissing: "Esta nota ya no existe",
     settingsAccentLabel: "Color de acento",
     settingsLangLabel: "Idioma",
     settingsHelpLabel: "Ayuda",
@@ -232,7 +266,7 @@ const STRINGS: Record<Language, Strings> = {
     importNothingNew: "Las plantillas del archivo ya estaban guardadas — no se agregó nada nuevo.",
     templatesFolder: "plantillas",
     clearAllBtn: "Borrar todas las notas",
-    clearAllConfirm: (n) => `¿Borrar las ${n} nota(s) guardadas en este dispositivo para esta sala? Esta acción no se puede deshacer — exportalas antes si querés conservarlas.`,
+    clearAllConfirm: (n) => (n === 1 ? "¿Mover la nota de esta sala a la papelera? Podés restaurarla durante 30 días." : `¿Mover las ${n} notas de esta sala a la papelera? Podés restaurarlas durante 30 días.`),
     brandPublic: "Público",
     publishTitle: "Compartir esta nota con los jugadores",
     unpublishTitle: "Compartida con los jugadores — clic para dejar de compartirla",
@@ -294,7 +328,7 @@ const STRINGS: Record<Language, Strings> = {
       tableMergeRight: "Combinar con la celda de la derecha", tableMergeDown: "Combinar con la celda de abajo", tableSplit: "Separar celda", tableDistribute: "Distribuir columnas", tableFitContent: "Ajustar al contenido", tableFitFrame: "Ajustar al marco",
       tableColor: "Color de fondo", tableColorCell: "Celda", tableColorRow: "Fila", tableColorCol: "Columna", tableColorNone: "Sin color",
       tableHeaderRow: "Fila de encabezado", tableHeaderCol: "Columna de encabezado", tableDelete: "Eliminar tabla",
-      bulletList: "Lista", numberList: "Lista numerada", outdent: "Reducir sangría",
+      listMenu: "Listas", bulletList: "Lista con viñetas", checkList: "Casillas", numberList: "Lista numerada", outdent: "Reducir sangría",
       indent: "Aumentar sangría", removeFormat: "Quitar formato",
       secret: "Ocultar a los jugadores",
     },
@@ -311,7 +345,18 @@ const STRINGS: Record<Language, Strings> = {
     emptyNote: "Empty note",
     renameTitle: "Rename note",
     renameAria: "Rename ",
-    deleteTitle: "Delete note",
+    deleteTitle: "Move to trash",
+    trashLink: (n) => `Trash (${n})`,
+    trashTitle: "Trash",
+    trashBack: "Back to the notes",
+    trashEmptyBtn: "Empty trash",
+    trashEmptyConfirm: (n) => (n === 1 ? "Delete the note in the trash for good? This can't be undone." : `Delete the ${n} notes in the trash for good? This can't be undone.`),
+    trashEmptyList: "The trash is empty.",
+    trashRestoreTitle: "Restore",
+    trashDeleteTitle: "Delete for good",
+    trashDeleteConfirm: (title) => `Delete “${title}” for good? This can't be undone.`,
+    trashDeletedAgo: "deleted ",
+    trashExpiresIn: (d) => (d <= 1 ? " · last day" : ` · ${d} days left`),
     deleteAria: "Delete ",
     editedAgo: "edited ",
     timeNow: "now",
@@ -341,6 +386,11 @@ const STRINGS: Record<Language, Strings> = {
     resizeTitle: "Resize panel (double-click: default size)",
     settingsClose: "Close",
     settingsInfo: "More info",
+    linkPickerTitle: "Link to a note",
+    linkPickerEmpty: "No matching notes",
+    linkOpen: (t) => `Open “${t}”`,
+    linkTrashed: "This note is in the trash",
+    linkMissing: "This note no longer exists",
     settingsAccentLabel: "Accent color",
     settingsLangLabel: "Language",
     settingsHelpLabel: "Help",
@@ -366,7 +416,7 @@ const STRINGS: Record<Language, Strings> = {
     importNothingNew: "The templates in the file were already saved — nothing new was added.",
     templatesFolder: "templates",
     clearAllBtn: "Clear all notes",
-    clearAllConfirm: (n) => `Delete the ${n} note(s) stored on this device for this room? This can't be undone — export them first if you want to keep them.`,
+    clearAllConfirm: (n) => (n === 1 ? "Move this room's note to the trash? You can restore it for 30 days." : `Move this room's ${n} notes to the trash? You can restore them for 30 days.`),
     brandPublic: "Public",
     publishTitle: "Share this note with the players",
     unpublishTitle: "Shared with the players — click to stop sharing it",
@@ -428,7 +478,7 @@ const STRINGS: Record<Language, Strings> = {
       tableMergeRight: "Merge with cell on the right", tableMergeDown: "Merge with cell below", tableSplit: "Split cell", tableDistribute: "Distribute columns", tableFitContent: "Fit to content", tableFitFrame: "Fit to frame",
       tableColor: "Background color", tableColorCell: "Cell", tableColorRow: "Row", tableColorCol: "Column", tableColorNone: "No color",
       tableHeaderRow: "Header row", tableHeaderCol: "Header column", tableDelete: "Delete table",
-      bulletList: "Bullet list", numberList: "Numbered list", outdent: "Decrease indent",
+      listMenu: "Lists", bulletList: "Bullet list", checkList: "Checklist", numberList: "Numbered list", outdent: "Decrease indent",
       indent: "Increase indent", removeFormat: "Clear formatting",
       secret: "Hide from players",
     },

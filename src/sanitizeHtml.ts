@@ -4,6 +4,7 @@
 // attributes and style properties survive. Nothing in the input can run or load anything.
 // DIV: older notes can contain browser-made <div> blocks (from before <p> became the default).
 import { SECRET_ATTR, SECRET_TAGS } from "./secret";
+import { LINK_ATTR, LINK_CLASS, NOTE_ID, linkElement } from "./noteLinks";
 
 const CLIP_TAGS = new Set(["P", "DIV", "H1", "H2", "H3", "H4", "BLOCKQUOTE", "UL", "OL", "LI", "B", "STRONG", "I", "EM", "U", "S", "STRIKE", "SPAN", "BR", "HR", "TABLE", "THEAD", "TBODY", "TR", "TH", "TD", "COLGROUP", "COL"]);
 const CLIP_DROP = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "TEMPLATE", "NOSCRIPT", "SVG", "MATH"]);
@@ -27,6 +28,14 @@ export function sanitizeNoteHtml(html: string): string {
       const el = n as HTMLElement;
       // toUpperCase: elements in the SVG/MathML namespaces keep lowercase tag names.
       if (CLIP_DROP.has(el.tagName.toUpperCase())) return;
+      // A link to a note: rebuilt from its id and text alone (see noteLinks.ts).
+      if (el.tagName === "SPAN" && el.classList.contains(LINK_CLASS)) {
+        const id = el.getAttribute(LINK_ATTR) || "";
+        if (NOTE_ID.test(id)) {
+          to.appendChild(linkElement(id, (el.textContent || "").replace(/\u200b/g, "")));
+          return;
+        }
+      }
       // Chrome writes color applied at a plain caret (execCommand foreColor) as <font color>; keep it,
       // as the <span style="color"> the rest of the editor uses.
       const fontColor = el.tagName === "FONT" ? (el.getAttribute("color") || "").trim() : "";
@@ -47,6 +56,9 @@ export function sanitizeNoteHtml(html: string): string {
       const exit = el.getAttribute("data-exit");
       if (/^(P|DIV|BLOCKQUOTE|H[1-4])$/.test(el.tagName) && exit && /^[1-4]$/.test(exit)) clean.setAttribute("data-exit", exit);
       if (el.tagName === "TABLE" && el.hasAttribute("data-header-col")) clean.setAttribute("data-header-col", "");
+      // A checklist, and its checked items (see the editor's list kinds).
+      if (el.tagName === "UL" && el.hasAttribute("data-check")) clean.setAttribute("data-check", "");
+      if (el.tagName === "LI" && el.hasAttribute("data-checked")) clean.setAttribute("data-checked", "");
       // A part hidden from players (see secret.ts).
       if (SECRET_TAGS.test(el.tagName) && el.hasAttribute(SECRET_ATTR)) clean.setAttribute(SECRET_ATTR, "");
       // Header cells: scope tells a header-row cell (col) from a header-column one (row).

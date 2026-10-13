@@ -23,7 +23,8 @@ export function escapeHtml(str: string): string {
 export function markdownToHtml(text: string): string {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const out: string[] = [];
-  let listTag: "ul" | "ol" | null = null;
+  // "check": a checklist (a <ul data-check>).
+  let listTag: "ul" | "ol" | "check" | null = null;
   // Between a <!-- hidden --> line and its closing one (or the end, if it never closes: better
   // hidden than shown by mistake), every block is hidden from players.
   let secret = false;
@@ -35,7 +36,7 @@ export function markdownToHtml(text: string): string {
 
   function closeList() {
     if (listTag) {
-      out.push(`</${listTag}>`);
+      out.push(`</${listTag === "check" ? "ul" : listTag}>`);
       listTag = null;
     }
   }
@@ -136,6 +137,19 @@ export function markdownToHtml(text: string): string {
       continue;
     }
 
+    // A task item, "- [ ] text" / "- [x] text" (also "- [] text"): a checklist.
+    const task = line.match(/^\s*[-*]\s+\[( |x|X)?\]\s+(.*)$/);
+    if (task) {
+      if (listTag !== "check") {
+        closeList();
+        push('<ul data-check="">');
+        listTag = "check";
+      }
+      out.push(`<li${task[1] && task[1] !== " " ? ' data-checked=""' : ""}>${inline(task[2])}</li>`);
+      i++;
+      continue;
+    }
+
     const bullet = line.match(/^\s*[-*]\s+(.*)$/);
     if (bullet) {
       if (listTag !== "ul") {
@@ -213,6 +227,8 @@ export function htmlToMarkdown(html: string): string {
     if (node.nodeType === 3) return escapeText(node.textContent || "");
     if (node.nodeType !== 1) return "";
     const el = node as HTMLElement;
+    // A link to a note: its title, wiki-style.
+    if (el.classList && el.classList.contains("note-link")) return `[[${escapeText(el.textContent || "")}]]`;
     const inner = Array.prototype.map.call(el.childNodes, inline).join("");
     switch (el.tagName) {
       case "B":
@@ -237,12 +253,14 @@ export function htmlToMarkdown(html: string): string {
   // correctly in the output without needing to know about the quirk explicitly.
   function list(el: HTMLElement, depth: number): string {
     const ordered = el.tagName === "OL";
+    const check = !ordered && el.hasAttribute("data-check");
     const indent = "  ".repeat(depth);
     const lines: string[] = [];
     let n = 1;
     Array.prototype.forEach.call(el.children, (child: HTMLElement) => {
       if (child.tagName === "LI") {
-        lines.push(`${indent}${ordered ? `${n++}. ` : "- "}${inline(child)}`);
+        const box = check ? (child.hasAttribute("data-checked") ? "[x] " : "[ ] ") : "";
+        lines.push(`${indent}${ordered ? `${n++}. ` : "- "}${box}${inline(child)}`);
       } else if (child.tagName === "UL" || child.tagName === "OL") {
         lines.push(list(child, depth + 1));
       }
