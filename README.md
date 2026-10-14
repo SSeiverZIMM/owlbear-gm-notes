@@ -125,7 +125,7 @@ with everything else:
   from its items. **Settings → Linked items** takes the menu entry out
   (the links are kept). Only the GM sees any of this.
 
-![A note linked to a token, with a link to another note and the [[ picker open](docs/screenshot-links.png)
+![A note linked to a token, with a link to another note and the picker open](docs/screenshot-links.png)
 
 ![Right-click a token: Link note](docs/screenshot-link-menu.png)
 
