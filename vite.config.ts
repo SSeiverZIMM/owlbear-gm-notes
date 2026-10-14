@@ -41,6 +41,15 @@ function devManifestName(): Plugin {
 
 export default defineConfig({
   plugins: [dropLocalManifest(), devManifestName()],
+  // Two pages: the panel, and the background page (always loaded, so built apart and kept tiny).
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(import.meta.dirname, "index.html"),
+        background: resolve(import.meta.dirname, "background.html"),
+      },
+    },
+  },
   server: {
     cors: true,
   },

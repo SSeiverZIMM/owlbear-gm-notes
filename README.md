@@ -41,6 +41,12 @@ https://notes.ijpedraza.com/manifest.json
   it (but not edit it), live as you write, minus any parts you've hidden
   from them. See
   [Sharing notes with players](#sharing-notes-with-players) below.
+- **Notes linked to map items**: right-click any item on the map (a token,
+  a door, a marker…) and choose **Link note** to pick its note; from then
+  on, **Open note** in that same menu opens it. The note lists its linked
+  items under its title: click a name to select the item on the map, or ×
+  to unlink it. Settings → Linked items turns the menu entry off (the links
+  are kept). Only the GM sees any of this.
 - **Templates**: start a note from a ready-made layout instead of a blank
   page — see [Templates](#templates) below.
 - **Copy and paste between notes** keeps all the formatting — pills, colors,

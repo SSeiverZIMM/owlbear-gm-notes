@@ -6,6 +6,7 @@
   "homepage_url": "https://github.com/nachoijp/owlbear-gm-notes",
   "icon": "https://notes.ijpedraza.com/logo.svg",
   "description": "Local dev build of GM Notes, served from the Vite dev server.",
+  "background_url": "http://localhost:5173/background.html",
   "action": {
     "title": "GM Notes (dev)",
     "icon": "https://notes.ijpedraza.com/icon-toolbar.png",

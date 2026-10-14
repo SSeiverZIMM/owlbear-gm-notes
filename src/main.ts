@@ -21,7 +21,9 @@ import type { Note } from "./notes";
 import { getPluginId } from "./pluginId";
 import { getTemplates, setTemplates, resolveTemplate, toCustomTemplate, missingBuiltins, newBuiltinTemplate } from "./templates";
 import type { Template } from "./templates";
-import { getLanguage, setLanguage, getAccentPref, setAccentPref, getSecretEyeLocked, setSecretEyeLocked } from "./prefs";
+import { getLanguage, setLanguage, getAccentPref, setAccentPref, getSecretEyeLocked, setSecretEyeLocked, getItemLinksEnabled, setItemLinksEnabled } from "./prefs";
+import { ITEM_LINK_CHANNEL, ITEM_LINK_KEY, isFreshRequest, isItemLinkRequestKey, itemLabel, takeItemLinkRequest } from "./itemLinks";
+import type { ItemLinkMessage, ItemLinkRequest } from "./itemLinks";
 import type { AccentPref } from "./prefs";
 import { ACCENTS, ACCENT_ORDER, watchTheme } from "./theme";
 import {
@@ -68,6 +70,10 @@ let accentPref: AccentPref = "auto";
 let secretEyeLocked = false;
 // The open editor's redraw of its hidden parts (the eyes change with the setting above).
 let redrawSecret: (() => void) | null = null;
+// Settings → Linked items, and the switcher's "pick the note for these items" mode (see the linked
+// items section).
+let itemLinksEnabled = true;
+let itemPick: { itemIds: string[]; names: string[] } | null = null;
 let role: "GM" | "PLAYER" = "GM";
 // The room's key for public notes (see publicKey.ts), null until some GM publishes the first one.
 let publicKey: string | null = null;
@@ -345,6 +351,10 @@ function renderList() {
       }
 
       item.addEventListener("click", () => {
+        if (itemPick && !readOnly) {
+          void linkItemsTo(n.id);
+          return;
+        }
         if (readOnly) playerActiveId = n.id;
         else activeId = n.id;
         renderList();
@@ -473,6 +483,136 @@ function onLinkClick(ev: MouseEvent): boolean {
     showLinkBubble(link);
   }
   return true;
+}
+
+// ---------- linked items: map items linked to a note (see itemLinks.ts, background.ts) ----------
+// The open note's linked items (in the current scene), as a chip row under its title: a name
+// selects the item on the map, × unlinks it. Read when the note opens and after linking or unlinking
+// only, never following the scene: tokens dragged around in combat cost nothing here.
+let linkedItemsRefresh: (() => void) | null = null;
+async function refreshLinkedItems(noteId: string, el: HTMLElement) {
+  if (!el) return;
+  const s = strings();
+  if (role !== "GM" || !itemLinksEnabled) {
+    el.hidden = true;
+    return;
+  }
+  let items: { id: string; name?: string }[] = [];
+  try {
+    if (!(await OBR.scene.isReady())) {
+      el.hidden = true;
+      return;
+    }
+    items = await OBR.scene.items.getItems((i) => i.metadata[ITEM_LINK_KEY] === noteId);
+  } catch (err) {
+    console.error("Notes: couldn't read the linked items", err);
+  }
+  if (!el.isConnected) return;
+  el.innerHTML = "";
+  if (!items.length) {
+    el.hidden = true;
+    return;
+  }
+  const label = document.createElement("span");
+  label.className = "linked-items-label";
+  label.textContent = s.linkedItemsLabel;
+  el.appendChild(label);
+  items.forEach((item) => {
+    const chip = document.createElement("span");
+    chip.className = "linked-item";
+    const name = document.createElement("button");
+    name.type = "button";
+    name.className = "linked-item-name";
+    name.textContent = itemLabel(item as never, s.unnamedItem);
+    name.title = s.linkedItemSelect;
+    name.addEventListener("click", () => void OBR.player.select([item.id], true));
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "linked-item-x";
+    x.textContent = "×";
+    x.title = s.linkedItemUnlink;
+    x.setAttribute("aria-label", s.linkedItemUnlink + ": " + name.textContent);
+    x.addEventListener("click", async () => {
+      await unlinkItems([item.id]);
+      void refreshLinkedItems(noteId, el);
+    });
+    chip.append(name, x);
+    el.appendChild(chip);
+  });
+  el.hidden = false;
+}
+async function unlinkItems(ids: string[]) {
+  try {
+    await OBR.scene.items.updateItems(ids, (drafts) => drafts.forEach((d) => { delete d.metadata[ITEM_LINK_KEY]; }));
+  } catch (err) {
+    console.error("Notes: couldn't unlink the items", err);
+  }
+}
+async function linkItemsTo(noteId: string) {
+  const pick = itemPick;
+  endItemPick();
+  if (!pick) return;
+  try {
+    await OBR.scene.items.updateItems(pick.itemIds, (drafts) => drafts.forEach((d) => { d.metadata[ITEM_LINK_KEY] = noteId; }));
+  } catch (err) {
+    console.error("Notes: couldn't link the items", err);
+  }
+  activeId = noteId;
+  closeDropdown();
+  renderList();
+  renderEditor();
+}
+function updatePickBanner() {
+  const banner = document.getElementById("pickBanner") as HTMLElement;
+  banner.hidden = !itemPick;
+  if (itemPick) document.getElementById("pickBannerText")!.textContent = strings().itemPickBanner(itemPick.names[0] || strings().unnamedItem, itemPick.itemIds.length - 1);
+}
+function endItemPick() {
+  itemPick = null;
+  updatePickBanner();
+}
+document.getElementById("pickCancelBtn")!.addEventListener("click", () => closeDropdown());
+// Each request is handled once, whichever way it arrives first (message or localStorage).
+let lastItemRequestAt = 0;
+function receiveItemLinkRequest(request: ItemLinkRequest) {
+  if (request.at <= lastItemRequestAt) return;
+  lastItemRequestAt = request.at;
+  void OBR.broadcast.sendMessage(ITEM_LINK_CHANNEL, { type: "taken", at: request.at } satisfies ItemLinkMessage, { destination: "LOCAL" });
+  void handleItemLinkRequest(request);
+}
+function checkItemLinkRequest() {
+  const request = takeItemLinkRequest();
+  if (request) receiveItemLinkRequest(request);
+  void OBR.broadcast.sendMessage(ITEM_LINK_CHANNEL, { type: "hello" } satisfies ItemLinkMessage, { destination: "LOCAL" });
+}
+async function handleItemLinkRequest(r: ItemLinkRequest) {
+  if (role !== "GM" || !itemLinksEnabled) return;
+  const s = strings();
+  if (r.action === "open") {
+    const id = r.noteId || "";
+    if (notes.some((n) => n.id === id)) {
+      activeId = id;
+      trashView = false;
+      closeDropdown();
+      renderList();
+      renderEditor();
+      return;
+    }
+    const trashed = trash.find((t) => t.id === id);
+    if (trashed) {
+      if (window.confirm(s.itemNoteTrashed(trashed.title || s.untitled))) await restoreFromTrash(id);
+      return;
+    }
+    if (window.confirm(s.itemNoteMissing(r.names[0] || s.unnamedItem))) await unlinkItems(r.itemIds);
+    return;
+  }
+  itemPick = { itemIds: r.itemIds, names: r.names };
+  trashView = false;
+  searchInput.value = "";
+  searchTerm = "";
+  openDropdown();
+  updatePickBanner();
+  renderList();
 }
 
 // ---------- trash: deleted notes, restorable for 30 days ----------
@@ -1090,6 +1230,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   containerEl.innerHTML =
     toolbarHtml +
     `<div class="title-row"><input class="note-title-input" id="${idPrefix}TitleInput" placeholder="${escapeHtml(s.titlePlaceholder)}" value="${escapeHtml(seed.title)}" /></div>` +
+    `<div class="linked-items" id="${idPrefix}LinkedItems" hidden></div>` +
     `<div class="editor-scroll"><div class="secret-layer" id="${idPrefix}SecretLayer" aria-hidden="true"></div><div class="editor-surface" id="${idPrefix}EditorSurface" contenteditable="true" data-placeholder="${escapeHtml(s.bodyPlaceholder)}"></div></div>` +
     `<div class="editor-foot"><span class="save-state"><span class="pip" id="${idPrefix}SavePip"></span><span id="${idPrefix}SavedAgo">${escapeHtml(s.savedPrefix + s.savedInstant)}</span><button type="button" class="cloud-sync-btn" id="${idPrefix}CloudSyncBtn" hidden><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M5.3 12.3h6.4a2.7 2.7 0 0 0 .35-5.37 3.75 3.75 0 0 0-7.3-1.1A2.6 2.6 0 0 0 5.3 12.3Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button></span><span id="${idPrefix}WordCount">${escapeHtml(s.wordsCount(0))}</span></div>`;
 
@@ -1114,6 +1255,8 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   // typing a block to land in and Enter a block to split from the very first keystroke; the placeholder
   // still shows normally since updateEmptyState() checks textContent, not innerHTML.
   surface.innerHTML = seed.html || "<p><br></p>";
+  linkedItemsRefresh = () => void refreshLinkedItems(seed.id, document.getElementById(idPrefix + "LinkedItems") as HTMLElement);
+  linkedItemsRefresh();
   // Links show their notes' current titles (and which ones are gone); new titles are saved with the
   // opening repair below, locally, without a new "edited" time.
   const linksSynced = syncLinks(surface, linkTarget, s.untitled);
@@ -3589,6 +3732,7 @@ function openDropdown() {
   document.addEventListener("keydown", onDocKeydown, true);
 }
 function closeDropdown() {
+  if (itemPick) endItemPick();
   if (switcherDropdown.hidden) return;
   switcherDropdown.hidden = true;
   noteSwitcher.classList.remove("open");
@@ -3828,6 +3972,20 @@ document.getElementById("secretEyeRow")!.addEventListener("click", (ev) => {
   updateSecretEyeButtons();
   if (redrawSecret) redrawSecret();
 });
+document.getElementById("itemLinksRow")!.addEventListener("click", (ev) => {
+  const b = (ev.target as HTMLElement).closest("button[data-itemlinks]") as HTMLElement | null;
+  if (!b) return;
+  const on = b.dataset.itemlinks === "on";
+  if (on === itemLinksEnabled) return;
+  itemLinksEnabled = on;
+  void setItemLinksEnabled(on);
+  updateItemLinksButtons();
+  if (linkedItemsRefresh) linkedItemsRefresh();
+});
+function updateItemLinksButtons() {
+  document.getElementById("itemLinksOnBtn")!.classList.toggle("is-active", itemLinksEnabled);
+  document.getElementById("itemLinksOffBtn")!.classList.toggle("is-active", !itemLinksEnabled);
+}
 function updateSecretEyeButtons() {
   document.getElementById("secretEyeClickBtn")!.classList.toggle("is-active", !secretEyeLocked);
   document.getElementById("secretEyeLockBtn")!.classList.toggle("is-active", secretEyeLocked);
@@ -3896,6 +4054,13 @@ function applyLanguage() {
   document.getElementById("cloudSyncHint")!.textContent = s.cloudSyncHint;
   document.getElementById("cloudSignInBtn")!.textContent = s.cloudSignInBtn;
   document.getElementById("cloudSignOutBtn")!.textContent = s.cloudSignOutBtn;
+  document.getElementById("settingsItemLinksLabel")!.textContent = s.settingsItemLinksLabel;
+  document.getElementById("itemLinksHint")!.textContent = s.itemLinksHint;
+  document.getElementById("itemLinksOnBtn")!.textContent = s.itemLinksOnBtn;
+  document.getElementById("itemLinksOffBtn")!.textContent = s.itemLinksOffBtn;
+  document.getElementById("pickCancelBtn")!.textContent = s.itemPickCancel;
+  updateItemLinksButtons();
+  updatePickBanner();
   document.getElementById("settingsSecretLabel")!.textContent = s.settingsSecretLabel;
   document.getElementById("secretEyeHint")!.textContent = s.secretEyeHint;
   document.getElementById("secretEyeClickBtn")!.textContent = s.secretEyeClickBtn;
@@ -4128,14 +4293,16 @@ let currentRoomIdForCloud: string | null = null;
 
 // ---------- boot ----------
 async function boot() {
-  const [initialNotes, initialLanguage, initialAccent, initialRole, initialEyeLocked] = await Promise.all([
+  const [initialNotes, initialLanguage, initialAccent, initialRole, initialEyeLocked, initialItemLinks] = await Promise.all([
     getNotes(),
     getLanguage(),
     getAccentPref(),
     OBR.player.getRole(),
     getSecretEyeLocked(),
+    getItemLinksEnabled(),
   ]);
   secretEyeLocked = initialEyeLocked;
+  itemLinksEnabled = initialItemLinks;
   notes = initialNotes;
   try {
     trash = await getTrash();
@@ -4178,6 +4345,23 @@ async function boot() {
       role = player.role;
       applyRoleView();
     }
+  });
+
+  // Linked items: a request from the context menu (see itemLinks.ts), now or whenever it comes;
+  // the chip follows the scene being there.
+  OBR.broadcast.onMessage(ITEM_LINK_CHANNEL, (event) => {
+    const message = event.data as ItemLinkMessage;
+    if (message.type === "request" && isFreshRequest(message.request)) receiveItemLinkRequest(message.request);
+  });
+  checkItemLinkRequest();
+  window.addEventListener("storage", (ev) => {
+    if (isItemLinkRequestKey(ev.key) && ev.newValue) checkItemLinkRequest();
+  });
+  OBR.action.onOpenChange((open) => {
+    if (open) checkItemLinkRequest();
+  });
+  OBR.scene.onReadyChange(() => {
+    if (linkedItemsRefresh) linkedItemsRefresh();
   });
 }
 

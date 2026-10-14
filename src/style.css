@@ -171,6 +171,24 @@ body{
 .row-btn.export-btn:hover, .row-btn.edit-btn:hover, .row-btn.template-btn:hover{ background:color-mix(in srgb, var(--primary-main) 20%, transparent); color:var(--primary-light); }
 .row-btn.del-btn:hover{ background:rgba(224,90,90,.18); color:#e05a5a; }
 .row-btn.restore-btn:hover{ background:color-mix(in srgb, var(--primary-main) 20%, transparent); color:var(--primary-light); }
+/* Linked items (see main.ts): the switcher's "pick the note" banner, and the chips under a note's
+   title. */
+.pick-banner{
+  flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding:7px 8px 7px 10px; border-bottom:1px solid var(--divider);
+  background:color-mix(in srgb, var(--primary-main) 14%, transparent); color:var(--text-primary); font-size:12px; font-weight:600;
+}
+.linked-items{ display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:0 12px 6px; font-size:11px; color:var(--text-disabled); }
+.linked-items-label{ margin-right:2px; }
+.linked-item{
+  display:inline-flex; align-items:center; border:1px solid var(--divider); border-radius:100px;
+  background:color-mix(in srgb, var(--text-primary) 5%, transparent); overflow:hidden;
+}
+.linked-item button{ border:0; background:transparent; color:var(--text-secondary); font:inherit; font-size:11px; cursor:pointer; }
+.linked-item-name{ padding:2px 4px 2px 8px; max-width:160px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.linked-item-name:hover{ color:var(--primary-light); }
+.linked-item-x{ padding:2px 7px 2px 3px; }
+.linked-item-x:hover{ color:#e05a5a; }
 /* The trash (see main.ts): a link at the bottom of the note list, and its own header while open. */
 .trash-actions{ grid-template-columns:repeat(2, 24px); }
 .trash-item{ cursor:default; }

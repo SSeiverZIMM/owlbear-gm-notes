@@ -2,6 +2,7 @@ import OBR from "@owlbear-rodeo/sdk";
 import type { Metadata } from "@owlbear-rodeo/sdk";
 import { getPluginId } from "./pluginId";
 import type { Language } from "./i18n";
+import { ITEM_LINKS_PREF_KEY } from "./itemLinks";
 
 const LANGUAGE_KEY = getPluginId("language");
 const ACCENT_KEY = getPluginId("accent");
@@ -49,6 +50,16 @@ export async function setAccentPref(accent: AccentPref): Promise<void> {
 export async function getSecretEyeLocked(): Promise<boolean> {
   const metadata = await OBR.player.getMetadata();
   return metadata[SECRET_EYE_LOCK_KEY] === true;
+}
+
+/** Whether the "Link note" / "Open note" entry is in the map's context menu (on unless turned off). */
+export async function getItemLinksEnabled(): Promise<boolean> {
+  const metadata = await OBR.player.getMetadata();
+  return metadata[ITEM_LINKS_PREF_KEY] !== false;
+}
+
+export async function setItemLinksEnabled(enabled: boolean): Promise<void> {
+  await OBR.player.setMetadata({ [ITEM_LINKS_PREF_KEY]: enabled });
 }
 
 export async function setSecretEyeLocked(locked: boolean): Promise<void> {

@@ -149,6 +149,18 @@ export interface Strings {
   publishCancelBtn: string;
   publishError: string;
   publicDotTitle: string;
+  settingsItemLinksLabel: string;
+  itemLinksHint: string;
+  itemLinksOnBtn: string;
+  itemLinksOffBtn: string;
+  itemPickBanner: (name: string, more: number) => string;
+  itemPickCancel: string;
+  linkedItemsLabel: string;
+  linkedItemSelect: string;
+  linkedItemUnlink: string;
+  itemNoteTrashed: (title: string) => string;
+  itemNoteMissing: (name: string) => string;
+  unnamedItem: string;
   settingsSecretLabel: string;
   secretEyeHint: string;
   secretEyeClickBtn: string;
@@ -278,6 +290,18 @@ const STRINGS: Record<Language, Strings> = {
     publishCancelBtn: "Cancelar",
     publishError: "No se pudo compartir la nota. Probá de nuevo.",
     publicDotTitle: "Compartida con los jugadores",
+    settingsItemLinksLabel: "Objetos vinculados",
+    itemLinksHint: "Con click derecho sobre cualquier objeto del mapa podés vincularle una nota y, después, abrirla desde ahí mismo. Desactivalo para sacar esa opción del menú; los vínculos se conservan.",
+    itemLinksOnBtn: "Activados",
+    itemLinksOffBtn: "Desactivados",
+    itemPickBanner: (name, more) => (more ? `Elegí la nota para «${name}» (+${more})` : `Elegí la nota para «${name}»`),
+    itemPickCancel: "Cancelar",
+    linkedItemsLabel: "Vinculada a:",
+    linkedItemSelect: "Seleccionar en el mapa",
+    linkedItemUnlink: "Desvincular",
+    itemNoteTrashed: (t) => `La nota vinculada, «${t}», está en la papelera. ¿Restaurarla?`,
+    itemNoteMissing: (name) => `La nota vinculada a «${name}» no está en este dispositivo (se borró, o no se sincronizó). ¿Desvincular el objeto?`,
+    unnamedItem: "objeto",
     settingsSecretLabel: "Partes ocultas",
     secretEyeHint: "Hacer click en el ojito junto a una parte oculta la vuelve a mostrar a los jugadores. Bloquealo si preferís que el ojito solo la señale.",
     secretEyeClickBtn: "Mostrar con un click",
@@ -428,6 +452,18 @@ const STRINGS: Record<Language, Strings> = {
     publishCancelBtn: "Cancel",
     publishError: "Couldn't share the note. Please try again.",
     publicDotTitle: "Shared with the players",
+    settingsItemLinksLabel: "Linked items",
+    itemLinksHint: "Right-click any item on the map to link a note to it, and then open that note from right there. Turn it off to take that option out of the menu; the links are kept.",
+    itemLinksOnBtn: "On",
+    itemLinksOffBtn: "Off",
+    itemPickBanner: (name, more) => (more ? `Pick the note for “${name}” (+${more})` : `Pick the note for “${name}”`),
+    itemPickCancel: "Cancel",
+    linkedItemsLabel: "Linked to:",
+    linkedItemSelect: "Select on the map",
+    linkedItemUnlink: "Unlink",
+    itemNoteTrashed: (t) => `The linked note, “${t}”, is in the trash. Restore it?`,
+    itemNoteMissing: (name) => `The note linked to “${name}” isn't on this device (deleted, or not synced). Unlink the item?`,
+    unnamedItem: "item",
     settingsSecretLabel: "Hidden parts",
     secretEyeHint: "Clicking the eye next to a hidden part shows it to players again. Lock it if you'd rather the eye only mark it.",
     secretEyeClickBtn: "Show on click",
