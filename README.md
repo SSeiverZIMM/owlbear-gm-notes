@@ -41,12 +41,10 @@ https://notes.ijpedraza.com/manifest.json
   it (but not edit it), live as you write, minus any parts you've hidden
   from them. See
   [Sharing notes with players](#sharing-notes-with-players) below.
-- **Notes linked to map items**: right-click any item on the map (a token,
-  a door, a marker…) and choose **Link note** to pick its note; from then
-  on, **Open note** in that same menu opens it. The note lists its linked
-  items under its title: click a name to select the item on the map, or ×
-  to unlink it. Settings → Linked items turns the menu entry off (the links
-  are kept). Only the GM sees any of this.
+- **Links between notes and map items**: type `[[` to link to another
+  note, or right-click any item on the map to link a note to it — see
+  [Links between notes and map items](#links-between-notes-and-map-items)
+  below.
 - **Templates**: start a note from a ready-made layout instead of a blank
   page — see [Templates](#templates) below.
 - **Copy and paste between notes** keeps all the formatting — pills, colors,
@@ -63,7 +61,7 @@ https://notes.ijpedraza.com/manifest.json
 - Resizable panel: drag the corner handle, or double-click it to return to
   the default size.
 
-![Text formatting, lists, quotes, and pills](docs/screenshot-formatting.png)
+![Pills in every color, and toggles that fold the lines under them](docs/screenshot-formatting.png)
 
 ![Switching between notes, with search](docs/screenshot-notes.png)
 
@@ -107,6 +105,29 @@ with everything else:
   so you can tell there's more.
 
 ![A table showing off its headers, colors, and merged cells](docs/screenshot-tables.png)
+
+## Links between notes and map items
+
+- **Link to another note**: type `[[` anywhere in a note and pick one from
+  the list (typing filters it; ↑/↓ and Enter, or a click). The link shows
+  the note's current title, even after you rename it. Click it to open
+  that note (Ctrl+click opens it straight away). A link to a deleted note
+  turns gray.
+- **Players** can follow links to notes that are shared with them; a link
+  to a private note reaches them as plain text, so it never points at
+  something they can't see.
+- **Link a note to a map item**: right-click any item on the map (a token,
+  a door, a marker…) and choose **Link note**, then pick the note. From
+  then on, **Open note** in that same menu opens it. Select several items
+  to link them all to the same note.
+- **The note lists its items** under its title: click a name to select the
+  item on the map, or × to unlink it. A note deleted for good is unlinked
+  from its items. **Settings → Linked items** takes the menu entry out
+  (the links are kept). Only the GM sees any of this.
+
+![A note linked to a token, with a link to another note and the [[ picker open](docs/screenshot-links.png)
+
+![Right-click a token: Link note](docs/screenshot-link-menu.png)
 
 ## Templates
 

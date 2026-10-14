@@ -28,7 +28,7 @@ you made public, read-only.
    formatting.
 3. Switch between notes and search them from the dropdown at the top.
 
-![Text formatting, lists, quotes, and pills](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-formatting.png)
+![Pills in every color, and toggles that fold the lines under them](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-formatting.png)
 
 ![Switching between notes, with search](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-notes.png)
 
@@ -51,6 +51,17 @@ drag into place. Drag a column's border to resize it, or double-click it to
 fit the column to its text. Tables wider than the panel scroll sideways.
 
 ![A table showing off its headers, colors, and merged cells](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-tables.png)
+
+## Links between notes and map items
+
+Type `[[` in a note to link to another one; click the link to open it.
+Right-click any item on the map (a token, a door, a marker…) and choose
+**Link note** to tie a note to it, then **Open note** from that same menu
+whenever you need it. Players only ever see links to notes you've shared.
+
+![A note linked to a token, with a link to another note and the [[ picker open](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-links.png)
+
+![Right-click a token: Link note](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-link-menu.png)
 
 ## Templates
 

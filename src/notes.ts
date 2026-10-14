@@ -132,6 +132,18 @@ export async function setTrash(trash: Note[]): Promise<void> {
   await store.setItem(trashKeyForRoom(OBR.room.id), trash);
 }
 
+// The ids of notes deleted for good (out of the trash, here or on another device): map items still
+// linked to one of them get unlinked when their scene is open (see main.ts). Only these: a link to a
+// note this device simply doesn't have (another device's, without cloud sync) is left alone.
+const ERASED_CAP = 500;
+export async function getErased(): Promise<string[]> {
+  const stored = await store.getItem<unknown>(`erased:${OBR.room.id}`);
+  return Array.isArray(stored) ? stored.filter((x): x is string => typeof x === "string") : [];
+}
+export async function setErased(ids: string[]): Promise<void> {
+  await store.setItem(`erased:${OBR.room.id}`, ids.slice(-ERASED_CAP));
+}
+
 /** Erases every note stored locally for the CURRENT room — an explicit, GM-initiated reset (e.g.
  * after exporting a backup and wanting a clean slate), not something run automatically. */
 export async function clearAllNotes(): Promise<void> {

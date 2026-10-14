@@ -2,7 +2,7 @@ import OBR from "@owlbear-rodeo/sdk";
 import "./style.css";
 import { getStrings } from "./i18n";
 import type { Language, Strings } from "./i18n";
-import { getNotes, setNotes, getTrash, setTrash, notesStorageBytes } from "./notes";
+import { getNotes, setNotes, getTrash, setTrash, getErased, setErased, notesStorageBytes } from "./notes";
 import { sanitizeNoteHtml } from "./sanitizeHtml";
 import { escapeHtml, markdownToHtml, flattenToInline, stripHtml } from "./markdown";
 import { exportNote as exportNoteFile, exportAll, contentFromImportFile, isDuplicateTemplate } from "./importExport";
@@ -541,6 +541,26 @@ async function refreshLinkedItems(noteId: string, el: HTMLElement) {
   });
   el.hidden = false;
 }
+// Notes deleted for good (see getErased in notes.ts): remembered, and their map items unlinked in
+// the open scene now, in any other scene when it's opened (with the panel loaded).
+let erased = new Set<string>();
+function noteErased(ids: string[]) {
+  ids.forEach((id) => erased.add(id));
+  void setErased(Array.from(erased)).catch((err) => console.error("Notes: failed to save the deleted notes' ids", err));
+  void unlinkErasedInScene();
+}
+async function unlinkErasedInScene() {
+  if (role !== "GM" || !erased.size) return;
+  try {
+    if (!(await OBR.scene.isReady())) return;
+    await OBR.scene.items.updateItems(
+      (item) => typeof item.metadata[ITEM_LINK_KEY] === "string" && erased.has(item.metadata[ITEM_LINK_KEY] as string),
+      (drafts) => drafts.forEach((d) => { delete d.metadata[ITEM_LINK_KEY]; })
+    );
+  } catch (err) {
+    console.error("Notes: couldn't unlink items from deleted notes", err);
+  }
+}
 async function unlinkItems(ids: string[]) {
   try {
     await OBR.scene.items.updateItems(ids, (drafts) => drafts.forEach((d) => { delete d.metadata[ITEM_LINK_KEY]; }));
@@ -640,6 +660,7 @@ function eraseFromTrash(ids: string[]) {
   if (!ids.length) return;
   trash = trash.filter((t) => !ids.includes(t.id));
   ids.forEach((id) => void deleteNoteFromCloud(id));
+  noteErased(ids);
 }
 // Returns whether it erased anything.
 function purgeExpiredTrash(): boolean {
@@ -4236,6 +4257,8 @@ function mergeCloudNotes(cloudNotes: Note[], removedIds: string[]) {
     }
     trash = trash.filter((t) => t.id !== id);
   };
+  // Deleted for good on another device: its map items here get unlinked too.
+  if (removedIds.length) noteErased(removedIds);
   removedIds.forEach((id) => {
     if (!notes.some((n) => n.id === id) && !trash.some((t) => t.id === id)) return;
     take(id);
@@ -4306,6 +4329,7 @@ async function boot() {
   notes = initialNotes;
   try {
     trash = await getTrash();
+    erased = new Set(await getErased());
   } catch (err) {
     console.error("Notes: failed to load the trash", err);
   }
@@ -4360,9 +4384,11 @@ async function boot() {
   OBR.action.onOpenChange((open) => {
     if (open) checkItemLinkRequest();
   });
-  OBR.scene.onReadyChange(() => {
+  OBR.scene.onReadyChange((ready) => {
+    if (ready) void unlinkErasedInScene();
     if (linkedItemsRefresh) linkedItemsRefresh();
   });
+  void unlinkErasedInScene();
 }
 
 OBR.onReady(() => {
