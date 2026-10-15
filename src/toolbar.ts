@@ -61,6 +61,10 @@ export const BLOCK_TYPES: { tag: BlockTag; key: "paragraph" | "h1" | "h2" | "h3"
 // Same dropdown shell as the color pickers (.pill-picker/.pill-swatches, so it shares their opening,
 // clamping and click-outside closing); its items are ordinary formatBlock toolbar buttons, handled by
 // the toolbar's own click listener.
+// The down arrow on the toolbar's dropdown buttons ("Aa" and lists). Its viewBox is cropped to the
+// arrow's width, so it takes no more room than it shows.
+const PICKER_CHEVRON =
+  '<svg class="picker-chev" viewBox="3.5 0 9 16" fill="none"><path d="M4.5 6.5 8 10l3.5-3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 function buildBlockPicker(idPrefix: string, tb: ToolbarStrings): string {
   const items = BLOCK_TYPES.map(
     (t) => `<button type="button" class="block-item block-item-${t.tag.toLowerCase()}" data-cmd="formatBlock" data-value="${t.tag}">${escapeHtml(tb[t.key])}</button>`
@@ -69,7 +73,7 @@ function buildBlockPicker(idPrefix: string, tb: ToolbarStrings): string {
     `<div class="pill-picker block-picker" id="${idPrefix}BlockPicker">` +
     `<button type="button" class="pill-picker-btn block-picker-btn" id="${idPrefix}BlockPickerBtn" title="${tb.blockType}" aria-haspopup="true" aria-expanded="false">` +
     `<span class="block-picker-label" id="${idPrefix}BlockPickerLabel">Aa</span>` +
-    `<svg viewBox="0 0 16 16" fill="none"><path d="M4.5 6.5 8 10l3.5-3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
+    PICKER_CHEVRON +
     `</button>` +
     `<div class="pill-swatches block-menu" id="${idPrefix}BlockMenu" hidden>${items}</div>` +
     `</div>`
@@ -91,7 +95,7 @@ function buildListPicker(idPrefix: string, tb: ToolbarStrings): string {
   ).join("");
   return (
     `<div class="pill-picker list-picker" id="${idPrefix}ListPicker">` +
-    `<button type="button" class="pill-picker-btn" id="${idPrefix}ListPickerBtn" title="${tb.listMenu}" aria-haspopup="true" aria-expanded="false">${LIST_MENU_ICON}</button>` +
+    `<button type="button" class="pill-picker-btn list-picker-btn" id="${idPrefix}ListPickerBtn" title="${tb.listMenu}" aria-haspopup="true" aria-expanded="false">${LIST_MENU_ICON}${PICKER_CHEVRON}</button>` +
     `<div class="pill-swatches block-menu list-menu" id="${idPrefix}ListMenu" hidden>${items}</div>` +
     `</div>`
   );

@@ -3,7 +3,8 @@ import { hasFirebaseConfig } from "./firebaseConfig";
 import { getPluginId } from "./pluginId";
 import type { Note } from "./notes";
 import type { Template } from "./templates";
-import type { SyncStatus } from "./cloudSync";
+import type { SyncStatus, SharedCopy } from "./cloudSync";
+export type { SharedCopy } from "./cloudSync";
 
 // Cloud sync without Firebase in the main bundle: cloudSync.ts and templateSync.ts (and Firebase
 // with them, most of the extension's size) load on demand, in the background. A device that was
@@ -133,7 +134,7 @@ export async function unpublishNote(noteId: string): Promise<void> {
   if (impl) await impl.unpublishNote(noteId);
 }
 /** Loads Firebase (players have no other reason to) and follows the room's public notes. */
-export function watchSharedNotes(key: string, onChange: (notes: Note[]) => void, onError: (err: unknown) => void): () => void {
+export function watchSharedNotes(key: string, onChange: (copies: SharedCopy[]) => void, onError: (err: unknown) => void): () => void {
   if (!cloudSyncAvailable()) return () => {};
   let stopped = false;
   let stop: (() => void) | null = null;
@@ -147,6 +148,25 @@ export function watchSharedNotes(key: string, onChange: (notes: Note[]) => void,
     stopped = true;
     stop?.();
   };
+}
+/** The GM's own shared copies, live: how the players' edits to editable notes come back. */
+export function watchOwnSharedNotes(key: string, onChange: (copies: SharedCopy[]) => void): () => void {
+  return impl ? impl.watchOwnSharedNotes(key, onChange) : () => {};
+}
+// Editing a shared note (see editLock.ts). A player's first edit loads Firebase if it isn't yet.
+export function editorUid(): string | null {
+  return impl ? impl.editorUid() : null;
+}
+export async function takeSharedLock(noteId: string, name: string): Promise<boolean> {
+  if (!cloudSyncAvailable()) return false;
+  return (impl ?? (await load())).takeSharedLock(noteId, name);
+}
+export async function saveSharedEdit(noteId: string, edit: { title: string; html: string; updatedAt: number }, name: string): Promise<boolean> {
+  if (!cloudSyncAvailable()) return false;
+  return (impl ?? (await load())).saveSharedEdit(noteId, edit, name);
+}
+export async function releaseSharedLock(noteId: string): Promise<void> {
+  if (impl) await impl.releaseSharedLock(noteId);
 }
 export async function reconcileSharedNotes(key: string, wanted: () => Note[]): Promise<void> {
   if (impl) await impl.reconcileSharedNotes(key, wanted);

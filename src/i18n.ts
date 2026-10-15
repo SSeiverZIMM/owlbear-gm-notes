@@ -70,6 +70,14 @@ export interface Strings {
   untitled: string;
   emptyNote: string;
   renameTitle: string;
+  pinTitle: string;
+  unpinTitle: string;
+  sortRecent: string;
+  sortAlpha: string;
+  sortTitle: string;
+  moreActions: string;
+  duplicateNote: string;
+  copySuffix: string;
   renameAria: string;
   deleteTitle: string;
   trashLink: (n: number) => string;
@@ -138,9 +146,15 @@ export interface Strings {
   templatesFolder: string;
   clearAllBtn: string;
   clearAllConfirm: (n: number) => string;
-  brandPublic: string;
-  publishTitle: string;
-  unpublishTitle: string;
+  brandVisible: string;
+  brandEditable: string;
+  shareMenuTitle: string;
+  shareModePrivate: string;
+  shareModePrivateHint: string;
+  shareModeVisible: string;
+  shareModeVisibleHint: string;
+  shareModeEditable: string;
+  shareModeEditableHint: string;
   publishSignedOutTitle: string;
   publishConfirmTitle: string;
   publishConfirmHint: string;
@@ -148,7 +162,20 @@ export interface Strings {
   publishConfirmBtn: string;
   publishCancelBtn: string;
   publishError: string;
+  publishEditableConfirmTitle: string;
+  publishEditableConfirmHint: string;
+  publishEditableConfirmSecret: (n: number) => string;
+  publishEditableConfirmShowBtn: string;
   publicDotTitle: string;
+  editableDotTitle: string;
+  editableDotPlayerTitle: string;
+  lockedBy: (name: string) => string;
+  finishEditing: string;
+  finishEditingTitle: string;
+  someone: string;
+  editableSignedOut: string;
+  undoPlayerEdits: string;
+  undoPlayerEditsBusy: (name: string) => string;
   settingsItemLinksLabel: string;
   itemLinksHint: string;
   itemLinksOnBtn: string;
@@ -156,6 +183,8 @@ export interface Strings {
   itemPickBanner: (name: string, more: number) => string;
   itemPickCancel: string;
   linkedItemsLabel: string;
+  connectionsTitle: string;
+  linkedFrom: string;
   linkedItemSelect: string;
   linkedItemUnlink: string;
   itemNoteTrashed: (title: string) => string;
@@ -206,6 +235,14 @@ const STRINGS: Record<Language, Strings> = {
     untitled: "Sin título",
     emptyNote: "Nota vacía",
     renameTitle: "Renombrar nota",
+    pinTitle: "Fijar arriba",
+    unpinTitle: "Dejar de fijar",
+    sortRecent: "Recientes",
+    sortAlpha: "A–Z",
+    sortTitle: "Cambiar el orden de la lista",
+    moreActions: "Más acciones",
+    duplicateNote: "Duplicar",
+    copySuffix: " (copia)",
     renameAria: "Renombrar ",
     deleteTitle: "Mover a la papelera",
     trashLink: (n) => `Papelera (${n})`,
@@ -279,9 +316,15 @@ const STRINGS: Record<Language, Strings> = {
     templatesFolder: "plantillas",
     clearAllBtn: "Borrar todas las notas",
     clearAllConfirm: (n) => (n === 1 ? "¿Mover la nota de esta sala a la papelera? Podés restaurarla durante 30 días." : `¿Mover las ${n} notas de esta sala a la papelera? Podés restaurarlas durante 30 días.`),
-    brandPublic: "Público",
-    publishTitle: "Compartir esta nota con los jugadores",
-    unpublishTitle: "Compartida con los jugadores — clic para dejar de compartirla",
+    brandVisible: "Visible",
+    brandEditable: "Pública",
+    shareMenuTitle: "Compartir esta nota con los jugadores",
+    shareModePrivate: "Privada",
+    shareModePrivateHint: "Solo vos la ves",
+    shareModeVisible: "Visible",
+    shareModeVisibleHint: "Los jugadores la leen",
+    shareModeEditable: "Pública",
+    shareModeEditableHint: "Los jugadores la editan, de a uno",
     publishSignedOutTitle: "Para compartir notas con los jugadores, iniciá sesión en Configuración",
     publishConfirmTitle: "¿Compartir esta nota?",
     publishConfirmSecret: (n) => (n === 1 ? "La parte oculta de la nota no se comparte." : `Las ${n} partes ocultas de la nota no se comparten.`),
@@ -289,7 +332,20 @@ const STRINGS: Record<Language, Strings> = {
     publishConfirmBtn: "Compartir",
     publishCancelBtn: "Cancelar",
     publishError: "No se pudo compartir la nota. Probá de nuevo.",
-    publicDotTitle: "Compartida con los jugadores",
+    publishEditableConfirmTitle: "¿Hacer pública esta nota?",
+    publishEditableConfirmHint: "Todos los jugadores de la sala van a poder verla y editarla, de a uno por vez. Vas a ver sus cambios, y podés deshacerlos desde el menú ⋯ de la nota.",
+    publishEditableConfirmSecret: (n) => (n === 1 ? "Su parte oculta se va a mostrar: una nota pública no tiene partes ocultas." : `Sus ${n} partes ocultas se van a mostrar: una nota pública no tiene partes ocultas.`),
+    publishEditableConfirmShowBtn: "Mostrar y compartir",
+    publicDotTitle: "Visible para los jugadores",
+    editableDotTitle: "Pública: los jugadores la editan",
+    editableDotPlayerTitle: "Podés editarla",
+    lockedBy: (name) => `${name} está editando`,
+    finishEditing: "Terminar",
+    finishEditingTitle: "Terminar de editar: libera la nota para que otros la editen",
+    someone: "Alguien",
+    editableSignedOut: "Para editar una nota pública, iniciá sesión en Configuración.",
+    undoPlayerEdits: "Deshacer los cambios de los jugadores",
+    undoPlayerEditsBusy: (name) => `${name} está editando esta nota. Probá cuando termine.`,
     settingsItemLinksLabel: "Objetos vinculados",
     itemLinksHint: "Con click derecho sobre cualquier objeto del mapa podés vincularle una nota y, después, abrirla desde ahí mismo. Desactivalo para sacar esa opción del menú; los vínculos se conservan.",
     itemLinksOnBtn: "Activados",
@@ -297,6 +353,8 @@ const STRINGS: Record<Language, Strings> = {
     itemPickBanner: (name, more) => (more ? `Elegí la nota para «${name}» (+${more})` : `Elegí la nota para «${name}»`),
     itemPickCancel: "Cancelar",
     linkedItemsLabel: "Vinculada a:",
+    connectionsTitle: "Objetos vinculados y notas que enlazan a esta",
+    linkedFrom: "Enlazada desde",
     linkedItemSelect: "Seleccionar en el mapa",
     linkedItemUnlink: "Desvincular",
     itemNoteTrashed: (t) => `La nota vinculada, «${t}», está en la papelera. ¿Restaurarla?`,
@@ -368,6 +426,14 @@ const STRINGS: Record<Language, Strings> = {
     untitled: "Untitled",
     emptyNote: "Empty note",
     renameTitle: "Rename note",
+    pinTitle: "Pin to the top",
+    unpinTitle: "Unpin",
+    sortRecent: "Recent",
+    sortAlpha: "A–Z",
+    sortTitle: "Change the list's order",
+    moreActions: "More actions",
+    duplicateNote: "Duplicate",
+    copySuffix: " (copy)",
     renameAria: "Rename ",
     deleteTitle: "Move to trash",
     trashLink: (n) => `Trash (${n})`,
@@ -441,9 +507,15 @@ const STRINGS: Record<Language, Strings> = {
     templatesFolder: "templates",
     clearAllBtn: "Clear all notes",
     clearAllConfirm: (n) => (n === 1 ? "Move this room's note to the trash? You can restore it for 30 days." : `Move this room's ${n} notes to the trash? You can restore them for 30 days.`),
-    brandPublic: "Public",
-    publishTitle: "Share this note with the players",
-    unpublishTitle: "Shared with the players — click to stop sharing it",
+    brandVisible: "Visible",
+    brandEditable: "Public",
+    shareMenuTitle: "Share this note with the players",
+    shareModePrivate: "Private",
+    shareModePrivateHint: "Only you see it",
+    shareModeVisible: "Visible",
+    shareModeVisibleHint: "Players read it",
+    shareModeEditable: "Public",
+    shareModeEditableHint: "Players edit it, one at a time",
     publishSignedOutTitle: "To share notes with the players, sign in from Settings",
     publishConfirmTitle: "Share this note?",
     publishConfirmSecret: (n) => (n === 1 ? "The note's hidden part isn't shared." : `The note's ${n} hidden parts aren't shared.`),
@@ -451,7 +523,20 @@ const STRINGS: Record<Language, Strings> = {
     publishConfirmBtn: "Share",
     publishCancelBtn: "Cancel",
     publishError: "Couldn't share the note. Please try again.",
-    publicDotTitle: "Shared with the players",
+    publishEditableConfirmTitle: "Make this note public?",
+    publishEditableConfirmHint: "Every player in the room will be able to see and edit it, one at a time. You'll see their changes, and you can undo them from the note's ⋯ menu.",
+    publishEditableConfirmSecret: (n) => (n === 1 ? "Its hidden part will be shown: a public note has no hidden parts." : `Its ${n} hidden parts will be shown: a public note has no hidden parts.`),
+    publishEditableConfirmShowBtn: "Show and share",
+    publicDotTitle: "Visible to the players",
+    editableDotTitle: "Public: players edit it",
+    editableDotPlayerTitle: "You can edit it",
+    lockedBy: (name) => `${name} is editing`,
+    finishEditing: "Done",
+    finishEditingTitle: "Done editing: frees the note for others to edit",
+    someone: "Someone",
+    editableSignedOut: "To edit a public note, sign in from Settings.",
+    undoPlayerEdits: "Undo the players' changes",
+    undoPlayerEditsBusy: (name) => `${name} is editing this note. Try again once they're done.`,
     settingsItemLinksLabel: "Linked items",
     itemLinksHint: "Right-click any item on the map to link a note to it, and then open that note from right there. Turn it off to take that option out of the menu; the links are kept.",
     itemLinksOnBtn: "On",
@@ -459,6 +544,8 @@ const STRINGS: Record<Language, Strings> = {
     itemPickBanner: (name, more) => (more ? `Pick the note for “${name}” (+${more})` : `Pick the note for “${name}”`),
     itemPickCancel: "Cancel",
     linkedItemsLabel: "Linked to:",
+    connectionsTitle: "Linked items, and notes that link here",
+    linkedFrom: "Linked from",
     linkedItemSelect: "Select on the map",
     linkedItemUnlink: "Unlink",
     itemNoteTrashed: (t) => `The linked note, “${t}”, is in the trash. Restore it?`,

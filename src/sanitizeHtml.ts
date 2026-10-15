@@ -60,7 +60,7 @@ export function sanitizeNoteHtml(html: string): string {
       if (el.tagName === "UL" && el.hasAttribute("data-check")) clean.setAttribute("data-check", "");
       if (el.tagName === "LI" && el.hasAttribute("data-checked")) clean.setAttribute("data-checked", "");
       // A part hidden from players (see secret.ts).
-      if (SECRET_TAGS.test(el.tagName) && el.hasAttribute(SECRET_ATTR)) clean.setAttribute(SECRET_ATTR, "");
+      if ((SECRET_TAGS.test(el.tagName) || el.tagName === "LI") && el.hasAttribute(SECRET_ATTR)) clean.setAttribute(SECRET_ATTR, "");
       // Header cells: scope tells a header-row cell (col) from a header-column one (row).
       const scope = el.getAttribute("scope");
       if (el.tagName === "TH" && (scope === "col" || scope === "row")) clean.setAttribute("scope", scope);

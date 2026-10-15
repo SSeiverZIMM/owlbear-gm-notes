@@ -52,6 +52,17 @@ export async function getSecretEyeLocked(): Promise<boolean> {
   return metadata[SECRET_EYE_LOCK_KEY] === true;
 }
 
+/** How the notes list is sorted (pinned notes first either way). */
+export type NoteSort = "recent" | "alpha";
+const NOTE_SORT_KEY = getPluginId("noteSort");
+export async function getNoteSort(): Promise<NoteSort> {
+  const metadata = await OBR.player.getMetadata();
+  return metadata[NOTE_SORT_KEY] === "alpha" ? "alpha" : "recent";
+}
+export async function setNoteSort(sort: NoteSort): Promise<void> {
+  await OBR.player.setMetadata({ [NOTE_SORT_KEY]: sort });
+}
+
 /** Whether the "Link note" / "Open note" entry is in the map's context menu (on unless turned off). */
 export async function getItemLinksEnabled(): Promise<boolean> {
   const metadata = await OBR.player.getMetadata();

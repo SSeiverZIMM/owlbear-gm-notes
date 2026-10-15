@@ -16,16 +16,60 @@ service cloud.firestore {
     // room's metadata, so only people in the room have it. Nothing matches /shared itself, so the
     // keys can't be listed. Each copy belongs to the account that published it: only that account
     // can change or delete it, and it can't hand it to another.
+    //
+    // A note its owner made editable (`editable: true`) can also be changed by anyone else in the
+    // room (players get an anonymous account for it), one person at a time: only its title and text,
+    // only while holding its lock, and the lock only if it's free, theirs, or not renewed for 45 s.
     match /shared/{key}/notes/{noteId} {
       allow read: if key.size() >= 24;
       allow create: if request.auth != null
                     && key.size() >= 24
                     && request.resource.data.owner == request.auth.uid;
       allow update: if request.auth != null
-                    && resource.data.owner == request.auth.uid
-                    && request.resource.data.owner == request.auth.uid;
+                    && ((resource.data.owner == request.auth.uid
+                         && request.resource.data.owner == request.auth.uid)
+                        || playerEdit());
       allow delete: if request.auth != null
                     && resource.data.owner == request.auth.uid;
+
+      // The lock is free for this person: none, theirs, or lapsed.
+      function lockFree() {
+        return !('lock' in resource.data)
+               || resource.data.lock.uid == request.auth.uid
+               || resource.data.lock.at < request.time - duration.value(45, 's');
+      }
+      // Taking or renewing the lock: this person's, stamped with the server's time.
+      function takesLock() {
+        let lock = request.resource.data.lock;
+        return lock.keys().hasOnly(['uid', 'name', 'at'])
+               && lock.uid == request.auth.uid
+               && lock.at == request.time
+               && lock.name is string && lock.name.size() <= 100;
+      }
+      // An edit: the title and text, signed with who made it.
+      function validEdit() {
+        let d = request.resource.data;
+        return d.title is string && d.title.size() <= 500
+               && d.html is string && d.html.size() <= 900000
+               && d.updatedAt is int
+               && d.editedBy.keys().hasOnly(['uid', 'name'])
+               && d.editedBy.uid == request.auth.uid
+               && d.editedBy.name is string && d.editedBy.name.size() <= 100;
+      }
+      function playerEdit() {
+        let changed = request.resource.data.diff(resource.data).affectedKeys();
+        return resource.data.get('editable', false) == true
+               && changed.hasOnly(['title', 'html', 'updatedAt', 'editedBy', 'lock'])
+               && lockFree()
+               && (
+                 // Taking or renewing the lock, with or without an edit.
+                 ('lock' in request.resource.data
+                   && takesLock()
+                   && (!changed.hasAny(['title', 'html', 'updatedAt', 'editedBy']) || validEdit()))
+                 // Letting it go.
+                 || (!('lock' in request.resource.data) && changed.hasOnly(['lock']))
+               );
+      }
     }
   }
 }

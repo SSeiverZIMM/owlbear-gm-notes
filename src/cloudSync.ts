@@ -1,11 +1,13 @@
 import { initializeApp, type FirebaseApp } from "firebase/app";
 import { sanitizeNoteHtml } from "./sanitizeHtml";
-import { stripSecret } from "./secret";
+import { stripSecret, SECRET_ATTR } from "./secret";
+import { lockHolder, lockLapsesIn, type LockInfo } from "./editLock";
 import { publicLinks } from "./noteLinks";
 import {
   getAuth,
   GoogleAuthProvider,
   signInWithPopup,
+  signInAnonymously,
   signOut,
   onAuthStateChanged,
   type Auth,
@@ -15,7 +17,13 @@ import {
   getFirestore,
   doc,
   setDoc,
+  updateDoc,
   deleteDoc,
+  deleteField,
+  serverTimestamp,
+  runTransaction,
+  Timestamp,
+  type DocumentData,
   collection,
   onSnapshot,
   getDocs,
@@ -24,7 +32,7 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { firebaseConfig, hasFirebaseConfig } from "./firebaseConfig";
-import type { Note } from "./notes";
+import { sanitizePlayerBase, type Note } from "./notes";
 
 // Cloud sync is a purely optional, additional copy of a room's notes — IndexedDB (see notes.ts)
 // stays the source of truth for THIS device and works with no sign-in at all. When signed in, notes
@@ -56,15 +64,20 @@ function ensureInitialized(): { auth: Auth; db: Firestore } | null {
   return { auth: auth!, db: db! };
 }
 
+// Players who edit a note get an anonymous account (see ensureEditorUser): an identity for the
+// Security Rules, nothing more. For everything else here, that's nobody signed in.
+function accountOf(user: User | null): User | null {
+  return user && !user.isAnonymous ? user : null;
+}
 export function getCurrentUser(): User | null {
   const init = ensureInitialized();
-  return init ? init.auth.currentUser : null;
+  return init ? accountOf(init.auth.currentUser) : null;
 }
 
 export function onAuthChange(callback: (user: User | null) => void): () => void {
   const init = ensureInitialized();
   if (!init) return () => {};
-  return onAuthStateChanged(init.auth, callback);
+  return onAuthStateChanged(init.auth, (user) => callback(accountOf(user)));
 }
 
 export async function signInWithGoogle(): Promise<void> {
@@ -99,7 +112,7 @@ export function onSyncStatusChange(callback: (status: SyncStatus) => void): () =
  * when cloud sync is unavailable or nobody is signed in. */
 export function cloudContext(): { db: Firestore; user: User } | null {
   const init = ensureInitialized();
-  const user = init ? init.auth.currentUser : null;
+  const user = init ? accountOf(init.auth.currentUser) : null;
   return init && user ? { db: init.db, user } : null;
 }
 
@@ -145,25 +158,68 @@ function sharedNoteDoc(key: string, noteId: string) {
 }
 // The public copy: the note minus its hidden parts, which never leave the GM's own copies, and with
 // links only to notes players can see (the others are just their titles, see noteLinks.ts).
+// An editable note is the players' too: it comes back from them whole, so it goes up whole. It has
+// no hidden parts (a stray mark is dropped, its line shown), and its links to private notes stay
+// links, which players see as plain text (an id is all they carry beyond the title).
 function sharedNoteData(note: Note, uid: string) {
+  if (note.editable) {
+    return { title: note.title, html: unmarkSecret(note.html), updatedAt: note.updatedAt, owner: uid, editable: true, editedBy: { uid, name: "" } };
+  }
   const html = publicLinks(stripSecret(note.html), (id) => {
     const target = getNoteById ? getNoteById(id) : undefined;
     return target && typeof target.deletedAt !== "number" ? { title: target.title, public: !!target.public } : null;
   });
   return { title: note.title, html, updatedAt: note.updatedAt, owner: uid };
 }
+function unmarkSecret(html: string): string {
+  if (!html.includes(SECRET_ATTR)) return html;
+  const box = document.createElement("div");
+  box.innerHTML = html;
+  box.querySelectorAll("[" + SECRET_ATTR + "]").forEach((el) => el.removeAttribute(SECRET_ATTR));
+  return box.innerHTML;
+}
 // The version of each public copy last written from here ("key/noteId" → updatedAt): the flush that
 // follows a publish finds it already up and skips it.
 const sharedVersions = new Map<string, number>();
 async function writeSharedNote(key: string, note: Note, uid: string) {
-  await setDoc(sharedNoteDoc(key, note.id), sharedNoteData(note, uid));
+  if (!note.editable) {
+    await setDoc(sharedNoteDoc(key, note.id), sharedNoteData(note, uid));
+    sharedVersions.set(key + "/" + note.id, note.updatedAt);
+    return;
+  }
+  // An editable note: never over a player who's editing it, nor over a newer version of theirs
+  // (that reaches this device first, see watchOwnSharedNotes). The lock stays as it is.
+  if (lockHolder(note.id, uid)) {
+    retryShared(note.id, lockLapsesIn(note.id, uid) + 1000);
+    return;
+  }
+  const ref = sharedNoteDoc(key, note.id);
+  await runTransaction(db!, async (tx) => {
+    const remote = await tx.get(ref);
+    const at = remote.exists() ? remote.data().updatedAt : -1;
+    // Already there, or behind the players' (nothing of this version left to send).
+    if (remote.exists() && remote.data().editable === true && typeof at === "number" && at >= note.updatedAt) return;
+    tx.set(ref, sharedNoteData(note, uid), { merge: true });
+  });
   sharedVersions.set(key + "/" + note.id, note.updatedAt);
+}
+// A write held back by a player's lock tries again once it has lapsed (or been let go sooner).
+const retries = new Map<string, ReturnType<typeof setTimeout>>();
+function retryShared(noteId: string, delay: number) {
+  if (retries.has(noteId)) return;
+  retries.set(
+    noteId,
+    setTimeout(() => {
+      retries.delete(noteId);
+      markNoteDirty(noteId);
+    }, delay)
+  );
 }
 
 /** Puts (or refreshes) a note's public copy. Rejects when it can't: nobody signed in, no key. */
 export async function publishNote(note: Note): Promise<void> {
   const init = ensureInitialized();
-  const user = init ? init.auth.currentUser : null;
+  const user = init ? accountOf(init.auth.currentUser) : null;
   if (!init || !user || !sharedKey) throw new Error("Notes: can't publish without an account and a key");
   await writeSharedNote(sharedKey, note, user.uid);
 }
@@ -172,7 +228,7 @@ export async function publishNote(note: Note): Promise<void> {
  * refused by the rules (there's no owner to check). */
 export async function unpublishNote(noteId: string): Promise<void> {
   const init = ensureInitialized();
-  const user = init ? init.auth.currentUser : null;
+  const user = init ? accountOf(init.auth.currentUser) : null;
   if (!init || !user || !sharedKey) return;
   sharedVersions.delete(sharedKey + "/" + noteId);
   try {
@@ -183,9 +239,35 @@ export async function unpublishNote(noteId: string): Promise<void> {
   }
 }
 
+/** A shared copy as read back: the note (sanitized), its lock, and who wrote it last. */
+export interface SharedCopy {
+  note: Note;
+  owner: string;
+  lock: LockInfo | null;
+  editedBy: string | null;
+}
+function readSharedCopy(id: string, data: DocumentData): SharedCopy {
+  const lock = data.lock as { uid?: unknown; name?: unknown; at?: unknown } | undefined;
+  const at = lock && lock.at instanceof Timestamp ? lock.at.toMillis() : Date.now();
+  const editedBy = data.editedBy as { uid?: unknown } | undefined;
+  return {
+    note: {
+      id,
+      title: typeof data.title === "string" ? data.title : "",
+      html: typeof data.html === "string" ? sanitizeNoteHtml(data.html) : "",
+      updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : 0,
+      public: true,
+      ...(data.editable === true ? { editable: true } : {}),
+    },
+    owner: typeof data.owner === "string" ? data.owner : "",
+    lock: lock && typeof lock.uid === "string" ? { uid: lock.uid, name: typeof lock.name === "string" ? lock.name : "", at } : null,
+    editedBy: editedBy && typeof editedBy.uid === "string" ? editedBy.uid : null,
+  };
+}
+
 /** A player's live view of the room's public notes: every note under `key`, whole, on each change.
- * No account needed. */
-export function watchSharedNotes(key: string, onChange: (notes: Note[]) => void, onError: (err: unknown) => void): () => void {
+ * No account needed to read. */
+export function watchSharedNotes(key: string, onChange: (copies: SharedCopy[]) => void, onError: (err: unknown) => void): () => void {
   const init = ensureInitialized();
   if (!init) {
     onError(new Error("Notes: Firebase isn't configured"));
@@ -193,22 +275,74 @@ export function watchSharedNotes(key: string, onChange: (notes: Note[]) => void,
   }
   return onSnapshot(
     collection(init.db, "shared", key, "notes"),
-    (snapshot) => {
-      onChange(
-        snapshot.docs.map((d) => {
-          const data = d.data() as { title?: unknown; html?: unknown; updatedAt?: unknown };
-          return {
-            id: d.id,
-            title: typeof data.title === "string" ? data.title : "",
-            html: typeof data.html === "string" ? sanitizeNoteHtml(data.html) : "",
-            updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : 0,
-            public: true,
-          };
-        })
-      );
-    },
+    (snapshot) => onChange(snapshot.docs.map((d) => readSharedCopy(d.id, d.data({ serverTimestamps: "estimate" })))),
     onError
   );
+}
+
+/** The GM's side of their editable notes: this account's copies under `key`, on each change, so
+ * the players' edits (and locks) reach the GM's own notes. */
+export function watchOwnSharedNotes(key: string, onChange: (copies: SharedCopy[]) => void): () => void {
+  const init = ensureInitialized();
+  const user = init ? accountOf(init.auth.currentUser) : null;
+  if (!init || !user) return () => {};
+  return onSnapshot(
+    query(collection(init.db, "shared", key, "notes"), where("owner", "==", user.uid)),
+    (snapshot) => onChange(snapshot.docs.map((d) => readSharedCopy(d.id, d.data({ serverTimestamps: "estimate" })))),
+    (err) => console.error("Notes: failed to follow the shared notes", err)
+  );
+}
+
+// ---------- editing a shared note: the lock, and the edits (see editLock.ts) ----------
+// The GM edits with their account; a player, with an anonymous one made on their first edit.
+async function ensureEditorUser(): Promise<User> {
+  const init = ensureInitialized();
+  if (!init) throw new Error("Notes: Firebase isn't configured");
+  return init.auth.currentUser ?? (await signInAnonymously(init.auth)).user;
+}
+/** Who edits from here (the account, or a player's anonymous one), if anyone yet. */
+export function editorUid(): string | null {
+  const init = ensureInitialized();
+  return init && init.auth.currentUser ? init.auth.currentUser.uid : null;
+}
+/** Takes (or renews) a note's lock. False when someone else holds it, or it can't be reached. */
+export async function takeSharedLock(noteId: string, name: string): Promise<boolean> {
+  if (!sharedKey) return false;
+  try {
+    const user = await ensureEditorUser();
+    await updateDoc(sharedNoteDoc(sharedKey, noteId), { lock: { uid: user.uid, name, at: serverTimestamp() } });
+    return true;
+  } catch (err) {
+    console.warn("Notes: couldn't take the note's lock", err);
+    return false;
+  }
+}
+/** Writes an edit, renewing the lock with it. False when the lock was lost meanwhile. */
+export async function saveSharedEdit(noteId: string, edit: { title: string; html: string; updatedAt: number }, name: string): Promise<boolean> {
+  if (!sharedKey) return false;
+  try {
+    const user = await ensureEditorUser();
+    await updateDoc(sharedNoteDoc(sharedKey, noteId), {
+      title: edit.title,
+      html: unmarkSecret(edit.html),
+      updatedAt: edit.updatedAt,
+      editedBy: { uid: user.uid, name },
+      lock: { uid: user.uid, name, at: serverTimestamp() },
+    });
+    sharedVersions.set(sharedKey + "/" + noteId, edit.updatedAt);
+    return true;
+  } catch (err) {
+    console.warn("Notes: couldn't save the shared note", err);
+    return false;
+  }
+}
+export async function releaseSharedLock(noteId: string): Promise<void> {
+  if (!sharedKey) return;
+  try {
+    await updateDoc(sharedNoteDoc(sharedKey, noteId), { lock: deleteField() });
+  } catch (err) {
+    console.warn("Notes: couldn't let the note's lock go", err);
+  }
 }
 
 /** Makes this account's public copies under `key` exactly `wanted()`: removes the ones no longer
@@ -217,7 +351,7 @@ export function watchSharedNotes(key: string, onChange: (notes: Note[]) => void,
  * note published meanwhile counts. */
 export async function reconcileSharedNotes(key: string, wanted: () => Note[]): Promise<void> {
   const init = ensureInitialized();
-  const user = init ? init.auth.currentUser : null;
+  const user = init ? accountOf(init.auth.currentUser) : null;
   if (!init || !user) return;
   try {
     const snapshot = await getDocs(query(collection(init.db, "shared", key, "notes"), where("owner", "==", user.uid)));
@@ -268,7 +402,7 @@ export async function flushCloudSync(): Promise<void> {
     debounceTimer = null;
   }
   const init = ensureInitialized();
-  const user = init ? init.auth.currentUser : null;
+  const user = init ? accountOf(init.auth.currentUser) : null;
   if (!init || !user || !currentRoomId || !getNoteById || !dirtyIds.size) return;
   const ids = Array.from(dirtyIds);
   dirtyIds = new Set();
@@ -286,8 +420,12 @@ export async function flushCloudSync(): Promise<void> {
             html: note.html,
             updatedAt: note.updatedAt,
             public: !!note.public,
+            ...(note.editable ? { editable: true } : {}),
+            ...(note.playerBase ? { playerBase: note.playerBase } : {}),
             // In the trash: other devices move it there too.
             ...(typeof note.deletedAt === "number" ? { deletedAt: note.deletedAt } : {}),
+            ...(typeof note.secretModel === "number" ? { secretModel: note.secretModel } : {}),
+            ...(note.pinned ? { pinned: true } : {}),
           }),
           note.public && sharedKey && sharedVersions.get(sharedKey + "/" + id) !== note.updatedAt
             ? writeSharedNote(sharedKey, note, user.uid)
@@ -305,7 +443,7 @@ export async function flushCloudSync(): Promise<void> {
 
 export async function deleteNoteFromCloud(noteId: string): Promise<void> {
   const init = ensureInitialized();
-  const user = init ? init.auth.currentUser : null;
+  const user = init ? accountOf(init.auth.currentUser) : null;
   if (!init || !user || !currentRoomId) return;
   dirtyIds.delete(noteId);
   try {
@@ -327,7 +465,7 @@ export function watchCloudNotes(
   onFirstSync?: () => void
 ): () => void {
   const init = ensureInitialized();
-  const user = init ? init.auth.currentUser : null;
+  const user = init ? accountOf(init.auth.currentUser) : null;
   if (!init || !user) return () => {};
   let first = true;
   return onSnapshot(
@@ -339,14 +477,19 @@ export function watchCloudNotes(
         if (change.type === "removed") {
           removedIds.push(change.doc.id);
         } else {
-          const data = change.doc.data() as { title?: unknown; html?: unknown; updatedAt?: unknown; public?: unknown; deletedAt?: unknown };
+          const data = change.doc.data() as { title?: unknown; html?: unknown; updatedAt?: unknown; public?: unknown; editable?: unknown; playerBase?: unknown; deletedAt?: unknown; secretModel?: unknown; pinned?: unknown };
+          const playerBase = sanitizePlayerBase(data.playerBase);
           notes.push({
             id: change.doc.id,
             title: typeof data.title === "string" ? data.title : "",
             html: typeof data.html === "string" ? sanitizeNoteHtml(data.html) : "",
             updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : Date.now(),
             ...(data.public === true ? { public: true } : {}),
+            ...(data.public === true && data.editable === true ? { editable: true } : {}),
+            ...(playerBase ? { playerBase } : {}),
             ...(typeof data.deletedAt === "number" ? { deletedAt: data.deletedAt } : {}),
+            ...(typeof data.secretModel === "number" ? { secretModel: data.secretModel } : {}),
+            ...(data.pinned === true ? { pinned: true } : {}),
           });
         }
       });

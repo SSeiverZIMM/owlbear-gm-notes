@@ -26,14 +26,17 @@ https://notes.ijpedraza.com/manifest.json
   and Enter for a divider. Ctrl+Z right after keeps what you typed as text.
 - **Checklists**: pick **Checklist** in the list menu and each item gets a
   box; click it to check the item off (it turns gray). Players see the
-  boxes in shared notes, but can't change them.
+  boxes in shared notes, and can check them in the ones they can edit.
 - **Tables**: header rows and columns, cell colors, merged cells, columns
   you can resize, and rows and columns you can drag around — see
   [Tables](#tables) below.
 - **Collapsible sections**: fold any heading to hide everything under it,
   and use toggles to tuck details away inside normal-looking text — see
   [Collapsible sections](#collapsible-sections) below.
-- Multiple notes per room, with search and a quick switcher.
+- Multiple notes per room, with search and a quick switcher. **Pin** the
+  notes you use most to keep them at the top, and sort the rest by most
+  recent or A–Z. Each note's **⋯** menu duplicates it, saves it as a
+  template, or exports it.
 - **Trash**: a deleted note goes to the trash (at the bottom of the notes
   list) for 30 days, so you can restore it or delete it for good. With
   cloud sync, the trash follows you to your other devices too.
@@ -63,7 +66,7 @@ https://notes.ijpedraza.com/manifest.json
 
 ![Pills in every color, and toggles that fold the lines under them](docs/screenshot-formatting.png)
 
-![Switching between notes, with search](docs/screenshot-notes.png)
+![Switching between notes: search, a pinned note, the ⋯ menu and the sort order](docs/screenshot-notes.png)
 
 ## Collapsible sections
 
@@ -120,12 +123,15 @@ with everything else:
   a door, a marker…) and choose **Link note**, then pick the note. From
   then on, **Open note** in that same menu opens it. Select several items
   to link them all to the same note.
-- **The note lists its items** under its title: click a name to select the
-  item on the map, or × to unlink it. A note deleted for good is unlinked
-  from its items. **Settings → Linked items** takes the menu entry out
+- **A note's connections**: the small button at the end of its title shows
+  how many map items and notes link to it. Click it to see them: click an
+  item to select it on the map (× unlinks it), or a note to open it. A
+  note deleted for good is unlinked from its items. **Settings → Linked items** takes the menu entry out
   (the links are kept). Only the GM sees any of this.
 
-![A note linked to a token, with a link to another note and the picker open](docs/screenshot-links.png)
+![A link to another note, and the note picker open](docs/screenshot-links.png)
+
+![A note's connections: the map items linked to it and the notes that link to it](docs/screenshot-connections.png)
 
 ![Right-click a token: Link note](docs/screenshot-link-menu.png)
 
@@ -154,48 +160,87 @@ start with the right sections in place.
 
 ## Sharing notes with players
 
-Any note can be shared with your players, read-only. Sharing needs you to
-be signed in (Settings → Cloud sync), since shared notes are stored in
-the cloud for players to read.
+Any note can be shared with your players, either for them to read or for
+them to edit too. Sharing needs you to be signed in (Settings → Cloud
+sync), since shared notes are stored in the cloud for players to reach.
 
 - **Share a note**: open it and click the **GM Notes** pill at the top
-  left. After you confirm, the pill turns green and reads **Public**, and
-  the note gets a green dot in the notes list.
-- **What players see**: when a player opens GM Notes, they get the public
+  left. It opens a menu with three choices:
+  - **Private**: only you see it (every note starts this way).
+  - **Visible**: players read it. The pill turns green and reads
+    **Visible**, and the note gets a green dot in the notes list.
+  - **Public**: players read it and edit it too. The pill turns orange
+    and reads **Public**, and the dot is orange.
+
+  Sharing a note asks first; sharing it less (back to visible or private)
+  doesn't.
+- **What players see**: when a player opens GM Notes, they get the shared
   notes, and nothing else. They can pick and search them and fold their
-  sections, but not edit them: there's no toolbar and no **+** button.
-  In Settings they only get the language, the accent color, and the manual.
-- **Your edits reach them live**, within about 15 seconds.
-- **Hide parts of a note**: select one or more lines and click the eye
-  button (the last one in the toolbar). They show in a darker box, with
-  an eye beside it, and players never see them: they're taken out before
-  the note is shared. Hide a heading or a toggle and its whole section
-  goes with it. To show them again, click the eye beside the box (Ctrl+Z
-  undoes it), or select them and click the toolbar's eye. If you'd rather
-  the eye beside the box ignore clicks, lock it in Settings → Hidden
-  parts. Hiding something in a public
+  sections. Visible notes are read-only: no toolbar. There's no **+**
+  button either way, so players can't make notes of their own. In
+  Settings they only get the language, the accent color, and the manual.
+- **Your edits reach them live**, within about 15 seconds for a visible
+  note, and right away for a public one.
+- **Hide parts of a note**: hover a line and click the eye that shows up
+  in the margin, or select one or more lines and click the eye button
+  (the last one in the toolbar). Each line hides on its own (a paragraph,
+  a heading, a list item), and players never see it: it's taken out
+  before the note is shared. Hidden lines show in a darker box (lines
+  hidden in a row share one), each with its eye: click it to show that
+  line again (Ctrl+Z undoes it). If you'd rather the eyes beside the text
+  ignore clicks, lock them in Settings → Hidden parts. Hiding something in a public
   note takes it away from players right away, but text you write first
   and hide afterwards was visible until then, so hide the line first
   and then write in it. A new line started from a hidden one is hidden
   too. When you share a note, the confirmation says how many hidden
   parts it has.
 - **Hidden parts in Markdown** go between `<!-- hidden -->` and
-  `<!-- /hidden -->` lines, which Markdown viewers don't show. Exporting
-  writes them, and importing or pasting reads them back (`<!-- oculto -->`
-  works too).
-- **Stop sharing**: click the green **Public** pill again. Deleting a
+  `<!-- /hidden -->` lines, which Markdown viewers don't show; a hidden list
+  item ends in `<!-- hidden -->` instead. Exporting writes them, and
+  importing or pasting reads them back (`<!-- oculto -->` works too).
+- **Stop sharing**: pick **Private** from the pill's menu. Deleting a
   shared note also takes it away from players.
 - **Regenerate key** (Settings → Shared notes): players read the public
   notes through a key stored in the room. If someone no longer in the
   room might still have it, regenerate it. From then on they stop seeing
   anything, and everyone in the room carries on without noticing.
-- **Signing out** with public notes asks first whether to unpublish them.
+- **Signing out** with shared notes asks first whether to unpublish them.
   Signed out, they can't be updated or unpublished, so players would keep
   seeing them as they are until you sign in again.
 
-![A shared note, as the GM sees it: a hidden part in its box](docs/screenshot-sharing-gm.png)
+![The GM Notes pill's menu: Private, Visible, and Public](docs/screenshot-sharing-menu.png)
 
-![The same note, as players see it: the hidden part isn't there](docs/screenshot-sharing-player.png)
+![A visible note, as the GM sees it (left) and as players see it (right)](docs/screenshot-sharing-visible.png)
+
+![Hidden lines, as the GM sees them (left) and as players see the same note (right)](docs/screenshot-sharing-hidden.png)
+
+### Notes players can edit
+
+A **public** note is everyone's to edit: a party inventory, a shared
+journal, the list of NPCs they've met.
+
+- **One person at a time.** Whoever starts typing has the note; for
+  everyone else (you included) it turns read-only, and the bar at the
+  bottom says who's editing it. Whoever has it gets a **Done** button
+  there instead: clicking it frees the note right away. It's also free
+  again as soon as they move to another note or stop typing for a minute
+  (or, if they lose their connection, after 45 seconds).
+- **Players edit the text and the title**, with the same toolbar as you,
+  except for hiding lines. They can't delete the note, change who sees
+  it, or link it to map items. The `[[` list only offers them the notes
+  shared with them; links to your private notes read as plain text to
+  them.
+- **No hidden parts.** Making a note public shows its hidden lines (the
+  confirmation says how many it has), and there's no eye to hide anything
+  while it stays public. Back to visible, you can hide lines again.
+- **Their changes reach your note**, and its ⋯ menu gets **Undo the
+  players' changes**: it brings back your version from before them (from
+  before the first change since your own last edit). Editing the note
+  yourself keeps their changes as part of it.
+- **You need to be signed in** to edit a public note, so your changes
+  reach the players.
+
+![A public note: whoever edits it has a Done button (left); everyone else sees who's editing (right)](docs/screenshot-sharing-public.png)
 
 ## Notes live on your device — with optional cloud sync
 

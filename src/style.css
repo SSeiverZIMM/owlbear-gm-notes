@@ -74,6 +74,27 @@ body{
 .brand-pill.clickable:hover{ filter:brightness(1.15); box-shadow:0 0 0 2px color-mix(in srgb, currentColor 25%, transparent); }
 .brand-pill.clickable:focus-visible{ outline:2px solid var(--primary-main); outline-offset:2px; }
 .brand-pill.public.clickable:focus-visible{ outline-color:#23804a; }
+/* Public, players edit it: white on this orange is ~4.6:1. */
+.brand-pill.editable{ background:#b35c00; color:#fff; }
+.brand-pill.editable.clickable:focus-visible{ outline-color:#b35c00; }
+/* The pill's menu: private, visible, public. */
+.share-menu{
+  position:absolute; z-index:50; width:222px; padding:4px; display:flex; flex-direction:column; gap:1px;
+  background:var(--bg-solid); border:1px solid var(--divider); border-radius:8px; box-shadow:0 12px 30px -10px rgba(0,0,0,.55);
+  font-family:var(--font-ui);
+}
+.share-option{
+  display:flex; align-items:flex-start; gap:9px; border:0; background:transparent; text-align:left; padding:7px 9px;
+  border-radius:5px; cursor:pointer; font:inherit; font-family:var(--font-ui); color:var(--text-primary);
+}
+.share-option:hover, .share-option:focus-visible{ outline:none; background:color-mix(in srgb, var(--primary-main) 14%, transparent); }
+.share-option.current{ background:color-mix(in srgb, var(--primary-main) 24%, transparent); }
+.share-dot{ flex:0 0 auto; width:9px; height:9px; margin-top:4px; border-radius:50%; box-shadow:inset 0 0 0 1.5px var(--text-disabled); }
+.share-visible .share-dot{ background:#2fa35f; box-shadow:none; }
+.share-editable .share-dot{ background:#e0902a; box-shadow:none; }
+.share-text{ display:flex; flex-direction:column; gap:1px; min-width:0; }
+.share-label{ font-size:12.5px; font-weight:600; }
+.share-hint{ font-size:11px; color:var(--text-secondary); }
 .panel-size-hint{
   position:absolute; right:12px; bottom:34px; z-index:20;
   font-family:var(--font-mono); font-size:10px; color:var(--text-primary);
@@ -153,6 +174,7 @@ body{
 .note-item-row{ display:flex; align-items:center; gap:4px; }
 .backup-row.stacked{ flex-direction:column; align-items:stretch; }
 .public-dot{ flex:0 0 auto; width:7px; height:7px; border-radius:50%; background:#2fa35f; }
+.public-dot.editable{ background:#e0902a; }
 .note-item.with-actions{ flex-direction:row; align-items:center; gap:6px; }
 .note-item-body{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:2px; }
 .row-actions{ flex:0 0 auto; display:grid; grid-template-columns:repeat(2, 24px); gap:2px; }
@@ -170,6 +192,29 @@ body{
 .note-item:hover .row-btn, .note-item:focus-within .row-btn{ opacity:1; }
 .row-btn.export-btn:hover, .row-btn.edit-btn:hover, .row-btn.template-btn:hover{ background:color-mix(in srgb, var(--primary-main) 20%, transparent); color:var(--primary-light); }
 .row-btn.del-btn:hover{ background:rgba(224,90,90,.18); color:#e05a5a; }
+/* Pins, the row's "more" menu, and the list's footer (trash link and order). */
+/* A pinned note's pin shows even when its row isn't hovered. */
+.note-item .row-btn.pin-btn.pinned{ opacity:1; color:var(--primary-light); }
+.row-btn.pin-btn.pinned svg path{ fill:currentColor; }
+.row-btn.pin-btn:hover{ background:color-mix(in srgb, var(--primary-main) 20%, transparent); color:var(--primary-light); }
+.row-btn.more-btn:hover{ background:color-mix(in srgb, var(--primary-main) 20%, transparent); color:var(--primary-light); }
+.row-menu{
+  position:absolute; z-index:50; min-width:150px; padding:4px; display:flex; flex-direction:column; gap:1px;
+  background:var(--bg-solid); border:1px solid var(--divider); border-radius:8px; box-shadow:0 12px 30px -10px rgba(0,0,0,.55);
+}
+.row-menu button{
+  border:0; background:transparent; text-align:left; padding:6px 9px; border-radius:5px; cursor:pointer;
+  font:inherit; font-family:var(--font-ui); font-size:12.5px; color:var(--text-primary);
+}
+.row-menu button:hover{ background:color-mix(in srgb, var(--primary-main) 20%, transparent); color:var(--primary-light); }
+.list-footer{ flex:0 0 auto; display:flex; align-items:stretch; border-top:1px solid var(--divider); }
+.list-footer .trash-link{ flex:1 1 auto; border-top:0; }
+.list-footer .trash-link[hidden] + .sort-btn{ margin-left:auto; }
+.sort-btn{
+  flex:0 0 auto; display:flex; align-items:center; gap:5px; padding:7px 12px; border:0; background:transparent;
+  color:var(--text-secondary); font:inherit; font-size:11.5px; cursor:pointer;
+}
+.sort-btn:hover{ background:color-mix(in srgb, var(--text-primary) 6%, transparent); color:var(--text-primary); }
 .row-btn.restore-btn:hover{ background:color-mix(in srgb, var(--primary-main) 20%, transparent); color:var(--primary-light); }
 /* Linked items (see main.ts): the switcher's "pick the note" banner, and the chips under a note's
    title. */
@@ -257,29 +302,32 @@ body{
   padding:3px 4px; background:var(--bg-paper); border-bottom:1px solid var(--divider);
 }
 .toolbar button{
-  width:22px; height:23px; padding:0; border-radius:5px; border:0; background:transparent; color:var(--text-secondary);
-  cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:700;
+  width:24px; height:24px; padding:0; border-radius:5px; border:0; background:transparent; color:var(--text-secondary);
+  cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:17px; font-weight:700;
 }
-.toolbar button svg{ width:16px; height:16px; }
+.toolbar button svg{ width:17px; height:17px; }
 .toolbar button:hover{ background:color-mix(in srgb, var(--primary-main) 16%, transparent); color:var(--text-primary); }
 .toolbar button.active{ background:color-mix(in srgb, var(--primary-main) 20%, transparent); color:var(--primary-light); }
 /* Separators take up whatever room the row has left, so the groups spread evenly across it: from
-   7px up to 14px. The buttons are 22px wide (23px tall) so the whole toolbar fits on one row at the
-   panel's default width, 434px. The line is drawn centered in that room. */
+   5px up to 12px. The buttons are 24px square (the list button's icon stays 16px, as it already fills
+   its box) so the whole toolbar fits on one row at the panel's default width,
+   439px (a 425px panel). The line is drawn centered in that room. */
 .toolbar .tb-sep{
-  flex:1 1 0; min-width:7px; max-width:14px; align-self:stretch; margin:4px 0;
+  flex:1 1 0; min-width:5px; max-width:12px; align-self:stretch; margin:4px 0;
   background:linear-gradient(var(--divider), var(--divider)) center / 1px 100% no-repeat;
 }
 
 .pill-picker{ position:relative; display:inline-flex; }
 .pill-picker .pill-picker-btn{
-  width:22px; height:23px; padding:0; border-radius:5px; border:0; background:transparent; color:var(--text-secondary);
+  width:24px; height:24px; padding:0; border-radius:5px; border:0; background:transparent; color:var(--text-secondary);
   cursor:pointer; display:flex; align-items:center; justify-content:center;
 }
-.pill-picker .pill-picker-btn svg{ width:16px; height:16px; }
+.pill-picker .pill-picker-btn svg{ width:17px; height:17px; }
+.pill-picker .list-picker-btn{ width:auto; gap:1px; padding:0 2px 0 3px; }
+.pill-picker .list-picker-btn svg{ width:16px; height:16px; }
 .pill-picker .pill-picker-btn:hover{ background:color-mix(in srgb, var(--primary-main) 16%, transparent); color:var(--text-primary); }
-.pill-picker .block-picker-btn{ width:auto; gap:1px; padding:0 1px 0 3px; font-size:14px; }
-.pill-picker .block-picker-btn svg{ width:12px; height:12px; }
+.pill-picker .block-picker-btn{ width:auto; gap:1px; padding:0 1px 0 3px; font-size:15px; }
+.pill-picker .pill-picker-btn svg.picker-chev{ flex:0 0 auto; width:6.75px; height:12px; }
 .block-picker-label{ min-width:16px; text-align:center; }
 .pill-swatches.block-menu{ flex-direction:column; gap:1px; min-width:140px; overflow-x:hidden; overflow-y:auto; }
 .toolbar .block-menu button{
@@ -320,8 +368,29 @@ body{
 
 .title-row{
   flex:0 0 auto; padding:8px 16px 6px; background:transparent;
-  border-bottom:1px solid var(--divider);
+  border-bottom:1px solid var(--divider); display:flex; align-items:center; gap:6px;
 }
+.title-row .note-title-input, .title-row .note-title-text{ flex:1 1 auto; min-width:0; }
+/* A note's connections (see main.ts): a count at the end of the title row, and its panel. */
+.connections-btn{
+  flex:0 0 auto; display:flex; align-items:center; gap:4px; padding:3px 8px 3px 6px; border-radius:100px; cursor:pointer;
+  border:1px solid var(--divider); background:color-mix(in srgb, var(--text-primary) 5%, transparent);
+  color:var(--text-secondary); font:inherit; font-family:var(--font-ui); font-size:12px; font-weight:600;
+}
+.connections-btn:hover{ color:var(--primary-light); border-color:color-mix(in srgb, var(--primary-main) 45%, var(--divider)); }
+.connections-pop{
+  position:absolute; z-index:45; min-width:180px; max-width:260px; max-height:60%; overflow-y:auto; padding:4px;
+  background:var(--bg-solid); border:1px solid var(--divider); border-radius:8px; box-shadow:0 12px 30px -10px rgba(0,0,0,.55);
+  font-family:var(--font-ui);
+}
+.connections-head{ padding:5px 8px 3px; font-size:10px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--text-disabled); }
+.connections-row{ display:flex; align-items:center; border-radius:5px; }
+.connections-row:hover{ background:color-mix(in srgb, var(--primary-main) 14%, transparent); }
+.connections-row button{ border:0; background:transparent; cursor:pointer; font:inherit; font-size:12.5px; }
+.connections-name{ flex:1 1 auto; min-width:0; text-align:left; padding:5px 8px; color:var(--text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.connections-name:hover{ color:var(--primary-light); }
+.connections-x{ flex:0 0 auto; padding:5px 9px; color:var(--text-disabled); }
+.connections-x:hover{ color:#e05a5a; }
 .note-title-input{
   width:100%; border:0; outline:0; background:transparent;
   font-family:var(--font-ui); font-weight:700; font-size:16.5px; color:var(--text-primary);
@@ -380,6 +449,9 @@ body{
   background:color-mix(in srgb, black 8%, transparent);
   box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--primary-main) 70%, transparent);
 }
+/* The eye a line that isn't hidden shows while hovered: fainter, it hides the line. */
+.secret-eye.hover{ opacity:.4; }
+.secret-eye.hover:hover{ opacity:1; }
 .editor-surface.has-secret{ padding-right:30px; }
 /* One indent step per enclosing section (H1 > H2 > H3 > toggle > text is at most 4 deep). */
 .editor-surface [data-depth="1"]{ margin-left:6px; }
@@ -405,6 +477,14 @@ body{
 }
 .editor-surface .note-link:hover{ background:color-mix(in srgb, var(--primary-main) 16%, transparent); }
 .editor-surface .note-link[data-missing]{ color:var(--text-disabled); }
+/* A player's link to a note that isn't shared with them reads as plain text. */
+.player-editor .editor-surface .note-link[data-missing]{ color:inherit; text-decoration:none; cursor:text; padding:0; }
+/* A note the players edit, while someone else has it: who, and a toolbar that does nothing. */
+.lock-banner{
+  flex:0 0 auto; margin:0 10px 6px; padding:5px 9px; border-radius:6px; font-family:var(--font-ui); font-size:11.5px;
+  color:var(--text-primary); background:color-mix(in srgb, #e0902a 16%, transparent); border:1px solid color-mix(in srgb, #e0902a 45%, transparent);
+}
+.toolbar.locked{ opacity:.4; pointer-events:none; }
 /* The "[[" picker and a link's bubble, floating over the panel. */
 .link-picker, .link-bubble{
   position:absolute; z-index:45; background:var(--bg-solid); border:1px solid var(--divider); border-radius:8px;
@@ -489,6 +569,19 @@ body{
   font-family:var(--font-mono); font-size:10px; color:var(--text-disabled);
 }
 .save-state{ display:flex; align-items:center; gap:6px; }
+/* The footer's right end: the word count, or, in a note the players edit, who has it / "Done". */
+/* Its right padding keeps it clear of the panel's resize handle in the corner. */
+.foot-end{ display:flex; align-items:center; min-width:0; margin-left:10px; padding-right:10px; }
+.lock-state{ display:flex; align-items:center; gap:4px; min-width:0; font-size:11px; color:color-mix(in srgb, #e0902a 75%, var(--text-primary)); }
+.lock-state svg{ flex:0 0 auto; }
+.lock-state-text{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.finish-edit-btn{
+  display:flex; align-items:center; gap:4px; padding:1px 7px; margin:-3px 0; border-radius:5px; background:transparent;
+  border:1px solid color-mix(in srgb, var(--primary-main) 55%, transparent);
+  font:inherit; font-size:11px; color:color-mix(in srgb, var(--primary-main) 75%, var(--text-primary)); cursor:pointer;
+}
+.finish-edit-btn:hover, .finish-edit-btn:focus-visible{ background:color-mix(in srgb, var(--primary-main) 16%, transparent); }
+.foot-end [hidden]{ display:none; }
 .save-state .pip{ width:6px; height:6px; border-radius:50%; background:#5fbf7a; transition:background .15s ease; }
 .save-state .pip.pending{ background:var(--text-disabled); }
 .cloud-sync-btn{

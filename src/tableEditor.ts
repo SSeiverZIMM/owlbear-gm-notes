@@ -582,7 +582,8 @@ export function createTableEditor(ctx: TableEditorContext) {
     setColWidths(drag.table, widths);
   });
   surface.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0) return;
+    // A read-only editor (a note someone else is editing) keeps its columns as they are.
+    if (ev.button !== 0 || !surface.isContentEditable) return;
     const hit = borderAt(ev);
     if (!hit) return;
     // Pointer capture keeps the drag going when the pointer leaves the table (or the panel).
@@ -729,7 +730,7 @@ export function createTableEditor(ctx: TableEditorContext) {
     g.addEventListener("mousedown", (ev) => ev.preventDefault());
     g.addEventListener("pointerdown", (ev) => {
       const f = gripFor[axis];
-      if (ev.button !== 0 || !f) return;
+      if (ev.button !== 0 || !f || !surface.isContentEditable) return;
       ev.preventDefault();
       g.setPointerCapture(ev.pointerId);
       moving = { axis, table: f.table, block: f.block, targets: moveTargets(f.table, axis, f.block.start), at: null };

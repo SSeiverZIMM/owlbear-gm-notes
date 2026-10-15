@@ -10,8 +10,17 @@ export interface Note {
   updatedAt: number;
   /** Shared with the room's players (see sharedNotes in cloudSync.ts). Absent = private. */
   public?: boolean;
+  /** Shared AND editable by the players, one person at a time (see editLock.ts). Only with `public`;
+   * such a note has no hidden parts. */
+  editable?: boolean;
+  /** The GM's version from before the players' latest edits, to go back to (see main.ts). */
+  playerBase?: { title: string; html: string; updatedAt: number };
   /** In the trash since then (see main.ts): kept apart from the notes, emptied after 30 days. */
   deletedAt?: number;
+  /** Which rules its hidden parts follow (see SECRET_MODEL in secret.ts). Absent: the old ones. */
+  secretModel?: number;
+  /** Kept at the top of the notes list. */
+  pinned?: boolean;
 }
 
 // Notes used to live in OBR.room.setMetadata(), which shares a single 16kB budget across EVERY
@@ -31,6 +40,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function sanitizePlayerBase(value: unknown): Note["playerBase"] | undefined {
+  if (!isPlainObject(value) || typeof value.title !== "string" || typeof value.html !== "string" || typeof value.updatedAt !== "number") return undefined;
+  return { title: value.title, html: value.html, updatedAt: value.updatedAt };
+}
+
 /** Exported for reuse by the export/import feature: a note read back from a file the GM exported
  * earlier needs exactly the same shape validation as one read back from storage. */
 export function sanitizeNote(value: unknown): Note | undefined {
@@ -48,7 +62,11 @@ export function sanitizeNote(value: unknown): Note | undefined {
     html: value.html,
     updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : Date.now(),
     ...(value.public === true ? { public: true } : {}),
+    ...(value.public === true && value.editable === true ? { editable: true } : {}),
+    ...(sanitizePlayerBase(value.playerBase) ? { playerBase: sanitizePlayerBase(value.playerBase)! } : {}),
     ...(typeof value.deletedAt === "number" ? { deletedAt: value.deletedAt } : {}),
+    ...(typeof value.secretModel === "number" ? { secretModel: value.secretModel } : {}),
+    ...(value.pinned === true ? { pinned: true } : {}),
   };
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "GM Notes (dev)",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "manifest_version": 3,
   "author": "Ignacio Pedraza",
   "homepage_url": "https://github.com/nachoijp/owlbear-gm-notes",
@@ -11,7 +11,7 @@
     "title": "GM Notes (dev)",
     "icon": "https://notes.ijpedraza.com/icon-toolbar.png",
     "popover": "http://localhost:5173/",
-    "width": 434,
+    "width": 439,
     "height": 580
   }
 }

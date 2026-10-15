@@ -6,6 +6,7 @@ import { sanitizeTemplate } from "./templates";
 import type { Template } from "./templates";
 import { sanitizeNoteHtml } from "./sanitizeHtml";
 import { htmlToMarkdown, markdownToHtml } from "./markdown";
+import { SECRET_MODEL } from "./secret";
 import { normalizeHtml } from "./structure";
 
 interface NoteExportFile {
@@ -15,9 +16,18 @@ interface NoteExportFile {
   title: string;
   html: string;
   updatedAt: number;
+  secretModel?: number;
 }
 function noteToExportPayload(note: Note): NoteExportFile {
-  return { type: "gm-notes-note", version: 1, id: note.id, title: note.title, html: normalizeHtml(note.html), updatedAt: note.updatedAt };
+  return {
+    type: "gm-notes-note",
+    version: 1,
+    id: note.id,
+    title: note.title,
+    html: normalizeHtml(note.html),
+    updatedAt: note.updatedAt,
+    ...(typeof note.secretModel === "number" ? { secretModel: note.secretModel } : {}),
+  };
 }
 // A built-in template is exported as just its marker (empty title/html) — it carries no text of its
 // own, and whichever GM Notes imports it already knows its text in every language.
@@ -139,7 +149,10 @@ function parseImportedNote(json: string): Note | null {
     return null;
   }
   const sanitized = sanitizeNote(data);
-  return sanitized ? { ...sanitized, html: normalizeHtml(sanitizeNoteHtml(sanitized.html)), id: freshNoteId() } : null;
+  if (!sanitized) return null;
+  // An imported note starts private, whatever the file says.
+  const { public: _public, editable: _editable, playerBase: _base, ...note } = sanitized;
+  return { ...note, html: normalizeHtml(sanitizeNoteHtml(note.html)), id: freshNoteId() };
 }
 
 // A Markdown file carries no title/id of its own — the filename (minus extension) becomes the title,
@@ -147,7 +160,8 @@ function parseImportedNote(json: string): Note | null {
 // Markdown and back in comes back as real formatting, not literal "**"/"#"/"-" markers.
 function noteFromMarkdownFile(filename: string, text: string, untitled: string): Note {
   const title = filename.replace(/\.md$/i, "").trim();
-  return { id: freshNoteId(), title: title || untitled, html: markdownToHtml(text), updatedAt: Date.now() };
+  // Markdown's hidden-part markers mark each line (see markdownToHtml): the current rules.
+  return { id: freshNoteId(), title: title || untitled, html: markdownToHtml(text), updatedAt: Date.now(), secretModel: SECRET_MODEL };
 }
 
 // A JSON file is a template if it says so (type "gm-notes-template", wherever it sits), or if it sits

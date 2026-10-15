@@ -1,7 +1,7 @@
 // Conversions between note HTML and plain text / Markdown: pasting, Markdown import/export, word
 // counts and search. Pure functions (no editor state).
 import { hasHeaderRow, textMatrix } from "./tableModel";
-import { SECRET_ATTR, compactSecret, secretCoverage } from "./secret";
+import { SECRET_ATTR, secretCoverage } from "./secret";
 
 // Parts hidden from players (see secret.ts) go between these two lines in Markdown: HTML comments,
 // which Markdown viewers don't show. Exported in English; read back in Spanish too.
@@ -28,10 +28,15 @@ export function markdownToHtml(text: string): string {
   // Between a <!-- hidden --> line and its closing one (or the end, if it never closes: better
   // hidden than shown by mistake), every block is hidden from players.
   let secret = false;
-  let anySecret = false;
+  // An item ending in a hidden-part marker is a hidden item.
+  const ITEM_MARKER = /\s*<!--\s*(hidden|oculto)\s*-->\s*$/i;
+  function item(text: string, attrs = ""): string {
+    const hidden = secret || ITEM_MARKER.test(text);
+    return `<li${attrs}${hidden ? ` ${SECRET_ATTR}=""` : ""}>${inline(hidden ? text.replace(ITEM_MARKER, "") : text)}</li>`;
+  }
+  // Lists carry their marks on their items (see item above), each line on its own.
   function push(html: string) {
-    if (secret) anySecret = true;
-    out.push(secret ? html.replace(/^<(\w+)/, `<$1 ${SECRET_ATTR}=""`) : html);
+    out.push(secret && !/^<(ul|ol)\b/.test(html) ? html.replace(/^<(\w+)/, `<$1 ${SECRET_ATTR}=""`) : html);
   }
 
   function closeList() {
@@ -145,7 +150,7 @@ export function markdownToHtml(text: string): string {
         push('<ul data-check="">');
         listTag = "check";
       }
-      out.push(`<li${task[1] && task[1] !== " " ? ' data-checked=""' : ""}>${inline(task[2])}</li>`);
+      out.push(item(task[2], task[1] && task[1] !== " " ? ' data-checked=""' : ""));
       i++;
       continue;
     }
@@ -157,7 +162,7 @@ export function markdownToHtml(text: string): string {
         push("<ul>");
         listTag = "ul";
       }
-      out.push(`<li>${inline(bullet[1])}</li>`);
+      out.push(item(bullet[1]));
       i++;
       continue;
     }
@@ -169,7 +174,7 @@ export function markdownToHtml(text: string): string {
         push("<ol>");
         listTag = "ol";
       }
-      out.push(`<li>${inline(numbered[1])}</li>`);
+      out.push(item(numbered[1]));
       i++;
       continue;
     }
@@ -202,11 +207,7 @@ export function markdownToHtml(text: string): string {
     push(`<p>${pLines.map(inline).join("<br>")}</p>`);
   }
   closeList();
-  if (!anySecret) return out.join("");
-  const box = document.createElement("div");
-  box.innerHTML = out.join("");
-  compactSecret(box);
-  return box.innerHTML;
+  return out.join("");
 }
 
 // The reverse of markdownToHtml() above, used for the Markdown export option. Formatting with no
@@ -254,13 +255,15 @@ export function htmlToMarkdown(html: string): string {
   function list(el: HTMLElement, depth: number): string {
     const ordered = el.tagName === "OL";
     const check = !ordered && el.hasAttribute("data-check");
+    // A hidden item (see secret.ts) carries the marker at its end.
+    const hiddenTail = (li: HTMLElement) => (li.hasAttribute(SECRET_ATTR) ? " " + SECRET_START : "");
     const indent = "  ".repeat(depth);
     const lines: string[] = [];
     let n = 1;
     Array.prototype.forEach.call(el.children, (child: HTMLElement) => {
       if (child.tagName === "LI") {
         const box = check ? (child.hasAttribute("data-checked") ? "[x] " : "[ ] ") : "";
-        lines.push(`${indent}${ordered ? `${n++}. ` : "- "}${box}${inline(child)}`);
+        lines.push(`${indent}${ordered ? `${n++}. ` : "- "}${box}${inline(child)}${hiddenTail(child)}`);
       } else if (child.tagName === "UL" || child.tagName === "OL") {
         lines.push(list(child, depth + 1));
       }

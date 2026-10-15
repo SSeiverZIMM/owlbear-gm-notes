@@ -13,7 +13,7 @@ import { renderToolbar, BLOCK_TYPES, BLOCK_ONLY_CMDS } from "./toolbar";
 import type { BlockTag } from "./toolbar";
 import { createHistory } from "./history";
 import { createSections } from "./sections";
-import { SECRET_ATTR, SECRET_TAGS, secretCoverage, secretPartCount } from "./secret";
+import { SECRET_ATTR, SECRET_MODEL, SECRET_TAGS, blockUnits, expandSecretMarks, secretPartCount, secretUnits } from "./secret";
 import { LINK_ATTR, linkElement, linkedIds, syncLinks } from "./noteLinks";
 import type { LinkTarget } from "./noteLinks";
 import { normalizeStructure, splitBlock, keepingSelection, itemToLine, markPills, restorePills } from "./structure";
@@ -21,7 +21,8 @@ import type { Note } from "./notes";
 import { getPluginId } from "./pluginId";
 import { getTemplates, setTemplates, resolveTemplate, toCustomTemplate, missingBuiltins, newBuiltinTemplate } from "./templates";
 import type { Template } from "./templates";
-import { getLanguage, setLanguage, getAccentPref, setAccentPref, getSecretEyeLocked, setSecretEyeLocked, getItemLinksEnabled, setItemLinksEnabled } from "./prefs";
+import { getLanguage, setLanguage, getAccentPref, setAccentPref, getSecretEyeLocked, setSecretEyeLocked, getItemLinksEnabled, setItemLinksEnabled, getNoteSort, setNoteSort } from "./prefs";
+import type { NoteSort } from "./prefs";
 import { ITEM_LINK_CHANNEL, ITEM_LINK_KEY, isFreshRequest, isItemLinkRequestKey, itemLabel, takeItemLinkRequest } from "./itemLinks";
 import type { ItemLinkMessage, ItemLinkRequest } from "./itemLinks";
 import type { AccentPref } from "./prefs";
@@ -47,7 +48,14 @@ import {
   publishNote,
   unpublishNote,
   reconcileSharedNotes,
+  watchOwnSharedNotes,
+  editorUid,
+  takeSharedLock,
+  saveSharedEdit,
+  releaseSharedLock,
 } from "./cloud";
+import type { SharedCopy } from "./cloud";
+import { LOCK_IDLE, LOCK_RENEW, lockHolder, lockLapsesIn, noteLockSeen } from "./editLock";
 import { ensurePublicKey, getPublicKey, watchPublicKey, replacePublicKey } from "./publicKey";
 import type { User } from "firebase/auth";
 
@@ -74,6 +82,8 @@ let redrawSecret: (() => void) | null = null;
 // items section).
 let itemLinksEnabled = true;
 let itemPick: { itemIds: string[]; names: string[] } | null = null;
+// The notes list's order (see the list footer); pinned notes come first either way.
+let noteSort: NoteSort = "recent";
 let role: "GM" | "PLAYER" = "GM";
 // The room's key for public notes (see publicKey.ts), null until some GM publishes the first one.
 let publicKey: string | null = null;
@@ -82,6 +92,29 @@ let publicKey: string | null = null;
 let sharedNotes: Note[] = [];
 let sharedState: "loading" | "ready" | "error" = "loading";
 let playerActiveId: string | null = null;
+// This player's name in Owlbear: what others see while they edit a note (see editLock.ts).
+let playerName = "";
+// The open editor, for what happens outside it: a note it's editing in the players' copy (see
+// buildNoteEditor) holds that note's lock, and isn't rebuilt under its holder.
+interface EditorSession {
+  noteId: string;
+  player: boolean;
+  /** Editing a shared note now: holding its lock, taking it, or with an edit still to go up. */
+  busy(): boolean;
+  html(): string;
+  title(): string;
+  /** A lock changed: the editor locks or unlocks to match. */
+  refreshLock(): void;
+  /** Leaving: the last edit goes up and the lock is let go. */
+  end(): void;
+}
+let editorSession: EditorSession | null = null;
+function endEditorSession() {
+  const session = editorSession;
+  editorSession = null;
+  session?.end();
+}
+window.addEventListener("pagehide", endEditorSession);
 let setThemeAccent: (accent: AccentPref) => void = () => {};
 
 // The debounced per-keystroke save (see scheduleSave in buildNoteEditor) waits 400ms of idle typing
@@ -156,7 +189,8 @@ function updateStorageMeter() {
 // out, clicking it opens Settings instead, since that's where signing in actually happens.
 function updateSyncIndicator() {
   const btn = document.getElementById("gmCloudSyncBtn") as HTMLButtonElement | null;
-  if (!btn || !cloudSyncAvailable()) {
+  // A player's editor saves to the shared copy only: the account's sync has nothing to say there.
+  if (!btn || !cloudSyncAvailable() || isPlayerView()) {
     if (btn) btn.hidden = true;
     return;
   }
@@ -238,6 +272,8 @@ function updateSwitcherHeader() {
 
 function renderList() {
   updateTrashChrome();
+  updateSortButton();
+  closeRowMenu();
   if (trashView && !isPlayerView()) {
     renderTrash();
     return;
@@ -254,9 +290,14 @@ function renderList() {
   }
 
   noteListEl.innerHTML = "";
+  const byTitle = (n: Note) => (n.title || s.untitled).toLocaleLowerCase(language);
   list
     .slice()
-    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .sort((a, b) => {
+      if (!readOnly && !!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+      if (!readOnly && noteSort === "alpha") return byTitle(a).localeCompare(byTitle(b), language);
+      return b.updatedAt - a.updatedAt;
+    })
     .forEach((n) => {
       const item = document.createElement("div");
       item.className = "note-item" + (n.id === (readOnly ? playerActiveId : activeId) ? " active" : "");
@@ -269,34 +310,37 @@ function renderList() {
       title.className = "title";
       title.textContent = n.title || s.untitled;
 
-      // Players only ever see public notes: the dot would say nothing there.
-      if (n.public && !readOnly) {
+      // Players only ever see public notes: for them, the dot marks the ones they can edit.
+      if (n.public && (!readOnly || n.editable)) {
         const dot = document.createElement("span");
-        dot.className = "public-dot";
-        dot.title = s.publicDotTitle;
+        dot.className = "public-dot" + (n.editable ? " editable" : "");
+        dot.title = n.editable ? (readOnly ? s.editableDotPlayerTitle : s.editableDotTitle) : s.publicDotTitle;
         dot.setAttribute("role", "img");
-        dot.setAttribute("aria-label", s.publicDotTitle);
+        dot.setAttribute("aria-label", dot.title);
         row.appendChild(dot);
       }
 
-      const templateBtn = document.createElement("button");
-      templateBtn.className = "row-btn template-btn";
-      templateBtn.title = s.saveAsTemplateTitle;
-      templateBtn.setAttribute("aria-label", s.saveAsTemplateAria + (n.title || s.untitled));
-      templateBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5" stroke="currentColor" stroke-width="1.3" stroke-dasharray="2.2 1.6"/><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
-      templateBtn.addEventListener("click", (ev) => {
+      // Pin: in the grid, always shown on a pinned note, on hover for the rest.
+      const pin = document.createElement("button");
+      pin.className = "row-btn pin-btn" + (n.pinned ? " pinned" : "");
+      pin.title = n.pinned ? s.unpinTitle : s.pinTitle;
+      pin.setAttribute("aria-label", pin.title + ": " + (n.title || s.untitled));
+      pin.setAttribute("aria-pressed", String(!!n.pinned));
+      pin.innerHTML = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M9.5 1.8 14.2 6.5l-2 .6-2.6 2.6.3 3.3-1.4 1.4-2.7-2.7L2.3 15 1 13.7l3.5-3.5-2.7-2.7 1.4-1.4 3.3.3 2.6-2.6.4-2Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>';
+      pin.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        void saveAsTemplate(n);
+        void togglePin(n.id);
       });
 
-      const exportBtn = document.createElement("button");
-      exportBtn.className = "row-btn export-btn";
-      exportBtn.title = s.exportTitle;
-      exportBtn.setAttribute("aria-label", s.exportAria + (n.title || s.untitled));
-      exportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 2v7m0 0L5 6m3 3 3-3M3 12.5h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-      exportBtn.addEventListener("click", (ev) => {
+      const moreBtn = document.createElement("button");
+      moreBtn.className = "row-btn more-btn";
+      moreBtn.title = s.moreActions;
+      moreBtn.setAttribute("aria-label", s.moreActions + ": " + (n.title || s.untitled));
+      moreBtn.setAttribute("aria-haspopup", "menu");
+      moreBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>';
+      moreBtn.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        openExportFormatModal(n);
+        openRowMenu(moreBtn, n);
       });
 
       const editBtn = document.createElement("button");
@@ -321,14 +365,14 @@ function renderList() {
 
       row.appendChild(title);
 
-      // 2x2 grid beside the whole item (not inline after the title) so the title keeps most of the
-      // row's width — four buttons in one line left little room for it.
+      // A grid beside the whole item (not inline after the title) so the title keeps most of the
+      // row's width: rename and delete; pin, and "more" (duplicate, save as template, export) last.
       const actions = document.createElement("div");
       actions.className = "row-actions";
-      actions.appendChild(templateBtn);
-      actions.appendChild(exportBtn);
       actions.appendChild(editBtn);
       actions.appendChild(del);
+      actions.appendChild(pin);
+      actions.appendChild(moreBtn);
 
       const snippet = document.createElement("div");
       snippet.className = "snippet";
@@ -405,6 +449,14 @@ async function deleteNote(id: string) {
   await persist();
   renderList();
   renderEditor();
+}
+
+// Brings a note's hidden parts to the current rules (see secret.ts), once. Returns whether it did.
+function migrateSecretModel(note: Note): boolean {
+  if (note.secretModel === SECRET_MODEL) return false;
+  note.html = expandSecretMarks(note.html);
+  note.secretModel = SECRET_MODEL;
+  return true;
 }
 
 // ---------- links between notes (see noteLinks.ts) ----------
@@ -485,62 +537,214 @@ function onLinkClick(ev: MouseEvent): boolean {
   return true;
 }
 
-// ---------- linked items: map items linked to a note (see itemLinks.ts, background.ts) ----------
-// The open note's linked items (in the current scene), as a chip row under its title: a name
-// selects the item on the map, × unlinks it. Read when the note opens and after linking or unlinking
-// only, never following the scene: tokens dragged around in combat cost nothing here.
-let linkedItemsRefresh: (() => void) | null = null;
-async function refreshLinkedItems(noteId: string, el: HTMLElement) {
-  if (!el) return;
-  const s = strings();
-  if (role !== "GM" || !itemLinksEnabled) {
-    el.hidden = true;
-    return;
-  }
-  let items: { id: string; name?: string }[] = [];
-  try {
-    if (!(await OBR.scene.isReady())) {
-      el.hidden = true;
-      return;
-    }
-    items = await OBR.scene.items.getItems((i) => i.metadata[ITEM_LINK_KEY] === noteId);
-  } catch (err) {
-    console.error("Notes: couldn't read the linked items", err);
-  }
-  if (!el.isConnected) return;
-  el.innerHTML = "";
-  if (!items.length) {
-    el.hidden = true;
-    return;
-  }
-  const label = document.createElement("span");
-  label.className = "linked-items-label";
-  label.textContent = s.linkedItemsLabel;
-  el.appendChild(label);
-  items.forEach((item) => {
-    const chip = document.createElement("span");
-    chip.className = "linked-item";
-    const name = document.createElement("button");
-    name.type = "button";
-    name.className = "linked-item-name";
-    name.textContent = itemLabel(item as never, s.unnamedItem);
-    name.title = s.linkedItemSelect;
-    name.addEventListener("click", () => void OBR.player.select([item.id], true));
-    const x = document.createElement("button");
-    x.type = "button";
-    x.className = "linked-item-x";
-    x.textContent = "×";
-    x.title = s.linkedItemUnlink;
-    x.setAttribute("aria-label", s.linkedItemUnlink + ": " + name.textContent);
-    x.addEventListener("click", async () => {
-      await unlinkItems([item.id]);
-      void refreshLinkedItems(noteId, el);
-    });
-    chip.append(name, x);
-    el.appendChild(chip);
-  });
-  el.hidden = false;
+// ---------- the notes list's row menu, pins, duplicates and order ----------
+// A row's "more" menu: duplicate, save as template, export. It floats over the panel (the switcher
+// clips what overflows it).
+const rowMenu = document.createElement("div");
+rowMenu.className = "row-menu";
+rowMenu.setAttribute("role", "menu");
+rowMenu.hidden = true;
+panel.appendChild(rowMenu);
+function closeRowMenu() {
+  rowMenu.hidden = true;
 }
+function openRowMenu(anchor: HTMLElement, n: Note) {
+  const s = strings();
+  const entries: [string, () => void][] = [
+    [s.duplicateNote, () => void duplicateNote(n)],
+    [s.saveAsTemplateTitle, () => void saveAsTemplate(n)],
+    [s.exportTitle, () => openExportFormatModal(n)],
+  ];
+  if (n.editable && n.playerBase) entries.push([s.undoPlayerEdits, () => void undoPlayerEdits(n.id)]);
+  rowMenu.innerHTML = "";
+  entries.forEach(([label, run]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("role", "menuitem");
+    b.textContent = label;
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      closeRowMenu();
+      run();
+    });
+    rowMenu.appendChild(b);
+  });
+  rowMenu.hidden = false;
+  const p = panel.getBoundingClientRect();
+  const a = anchor.getBoundingClientRect();
+  const w = rowMenu.getBoundingClientRect().width;
+  const h = rowMenu.getBoundingClientRect().height;
+  rowMenu.style.left = `${Math.max(4, Math.min(a.right - p.left - w, p.width - w - 4))}px`;
+  const below = a.bottom - p.top + 2;
+  rowMenu.style.top = `${below + h > p.height - 4 ? a.top - p.top - h - 2 : below}px`;
+}
+document.addEventListener("pointerdown", (ev) => {
+  if (!rowMenu.hidden && !rowMenu.contains(ev.target as Node)) closeRowMenu();
+}, true);
+async function togglePin(id: string) {
+  const n = notes.find((x) => x.id === id);
+  if (!n) return;
+  if (n.pinned) delete n.pinned;
+  else n.pinned = true;
+  n.updatedAt = Date.now();
+  markNoteDirty(id);
+  renderList();
+  await persist();
+}
+// A copy of a note, opened: private, with no map items linked to it.
+async function duplicateNote(n: Note) {
+  const s = strings();
+  const copy: Note = {
+    id: "n" + Date.now(),
+    title: (n.title || s.untitled) + s.copySuffix,
+    html: n.html,
+    updatedAt: Date.now(),
+    secretModel: n.secretModel ?? SECRET_MODEL,
+  };
+  notes.unshift(copy);
+  activeId = copy.id;
+  markNoteDirty(copy.id);
+  closeDropdown();
+  renderList();
+  renderEditor();
+  await persist();
+}
+// The list's footer: the trash link and the order.
+const listFooter = document.createElement("div");
+listFooter.className = "list-footer";
+const sortBtn = document.createElement("button");
+sortBtn.type = "button";
+sortBtn.className = "sort-btn";
+const trashLinkEl = document.getElementById("trashLink") as HTMLElement;
+trashLinkEl.replaceWith(listFooter);
+listFooter.append(trashLinkEl, sortBtn);
+sortBtn.addEventListener("click", () => {
+  noteSort = noteSort === "recent" ? "alpha" : "recent";
+  void setNoteSort(noteSort);
+  renderList();
+});
+function updateSortButton() {
+  const s = strings();
+  sortBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M4.5 2.5v11M2 11l2.5 2.5L7 11M9.5 4h4.5M9.5 8h3.5M9.5 12h2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  sortBtn.append(document.createTextNode(noteSort === "alpha" ? s.sortAlpha : s.sortRecent));
+  sortBtn.title = s.sortTitle;
+  listFooter.hidden = isPlayerView() || trashView;
+}
+
+// ---------- linked items: map items linked to a note (see itemLinks.ts, background.ts) ----------
+// A note's connections: the map items linked to it (in the current scene) and the notes linking to
+// it. A small button at the end of its title row counts them; it opens a panel listing both: an
+// item's name selects it on the map, × unlinks it; a note's name opens it. The items are read when
+// the note opens and after linking or unlinking only, never following the scene: tokens dragged
+// around in combat cost nothing here.
+let linkedItemsRefresh: (() => void) | null = null;
+const connectionsPop = document.createElement("div");
+connectionsPop.className = "connections-pop";
+connectionsPop.hidden = true;
+panel.appendChild(connectionsPop);
+let connections: { noteId: string; items: { id: string; name?: string }[]; backlinks: Note[]; btn: HTMLElement | null } = { noteId: "", items: [], backlinks: [], btn: null };
+async function refreshLinkedItems(noteId: string, btn: HTMLElement) {
+  if (!btn) return;
+  if (role !== "GM") {
+    btn.hidden = true;
+    return;
+  }
+  const backlinks = notes.filter((n) => n.id !== noteId && n.html.includes(`${LINK_ATTR}="${noteId}"`));
+  let items: { id: string; name?: string }[] = [];
+  if (itemLinksEnabled) {
+    try {
+      if (await OBR.scene.isReady()) items = await OBR.scene.items.getItems((i) => i.metadata[ITEM_LINK_KEY] === noteId);
+    } catch (err) {
+      console.error("Notes: couldn't read the linked items", err);
+    }
+  }
+  if (!btn.isConnected) return;
+  connections = { noteId, items, backlinks, btn };
+  const count = items.length + backlinks.length;
+  btn.hidden = !count;
+  (btn.querySelector(".connections-count") as HTMLElement).textContent = String(count);
+  btn.title = strings().connectionsTitle;
+  if (!connectionsPop.hidden) renderConnections();
+}
+function renderConnections() {
+  const s = strings();
+  const { items, backlinks, btn } = connections;
+  connectionsPop.innerHTML = "";
+  const section = (heading: string) => {
+    const h = document.createElement("div");
+    h.className = "connections-head";
+    h.textContent = heading;
+    connectionsPop.appendChild(h);
+  };
+  if (items.length) {
+    section(s.settingsItemLinksLabel);
+    items.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "connections-row";
+      const name = document.createElement("button");
+      name.type = "button";
+      name.className = "connections-name";
+      name.textContent = itemLabel(item as never, s.unnamedItem);
+      name.title = s.linkedItemSelect;
+      name.addEventListener("click", () => void OBR.player.select([item.id], true));
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "connections-x";
+      x.textContent = "×";
+      x.title = s.linkedItemUnlink;
+      x.setAttribute("aria-label", s.linkedItemUnlink + ": " + name.textContent);
+      x.addEventListener("click", async () => {
+        await unlinkItems([item.id]);
+        if (btn) void refreshLinkedItems(connections.noteId, btn);
+      });
+      row.append(name, x);
+      connectionsPop.appendChild(row);
+    });
+  }
+  if (backlinks.length) {
+    section(s.linkedFrom);
+    backlinks.forEach((n) => {
+      const row = document.createElement("div");
+      row.className = "connections-row";
+      const name = document.createElement("button");
+      name.type = "button";
+      name.className = "connections-name";
+      name.textContent = n.title || s.untitled;
+      name.addEventListener("click", () => {
+        closeConnections();
+        openLinkedNote(n.id);
+      });
+      row.appendChild(name);
+      connectionsPop.appendChild(row);
+    });
+  }
+  if (!items.length && !backlinks.length) {
+    closeConnections();
+    return;
+  }
+  if (btn) {
+    const p = panel.getBoundingClientRect();
+    const b = btn.getBoundingClientRect();
+    const w = connectionsPop.getBoundingClientRect().width;
+    connectionsPop.style.left = `${Math.max(4, Math.min(b.right - p.left - w, p.width - w - 4))}px`;
+    connectionsPop.style.top = `${b.bottom - p.top + 4}px`;
+  }
+}
+function toggleConnections() {
+  if (!connectionsPop.hidden) {
+    closeConnections();
+    return;
+  }
+  connectionsPop.hidden = false;
+  renderConnections();
+}
+function closeConnections() {
+  connectionsPop.hidden = true;
+}
+document.addEventListener("pointerdown", (ev) => {
+  const t = ev.target as Node;
+  if (!connectionsPop.hidden && !connectionsPop.contains(t) && !(connections.btn && connections.btn.contains(t))) closeConnections();
+}, true);
 // Notes deleted for good (see getErased in notes.ts): remembered, and their map items unlinked in
 // the open scene now, in any other scene when it's opened (with the panel loaded).
 let erased = new Set<string>();
@@ -646,6 +850,8 @@ function moveToTrash(note: Note) {
   // Out of the players' sight first; restoring it doesn't share it again.
   if (note.public) void unpublishNote(note.id);
   delete note.public;
+  delete note.editable;
+  delete note.playerBase;
   note.deletedAt = now;
   note.updatedAt = now;
   trash = trash.filter((t) => t.id !== note.id);
@@ -805,31 +1011,59 @@ function applyPublicKey(key: string | null) {
   // The key was replaced (here or by another GM): this account's copies move to the new one.
   if (old && canPublish()) void reconcileSharedNotes(old, () => []);
   reconcilePublicNotes();
+  followOwnShared();
+}
+// A note's sharing: private (the GM's alone), visible (players read it) or editable (players edit it,
+// one at a time, see editLock.ts; such a note has no hidden parts).
+type ShareMode = "private" | "visible" | "editable";
+function shareMode(n: Note | undefined): ShareMode {
+  return !n || !n.public ? "private" : n.editable ? "editable" : "visible";
+}
+function applyShareMode(n: Note, mode: ShareMode) {
+  if (mode === "private") delete n.public;
+  else n.public = true;
+  if (mode === "editable") n.editable = true;
+  else {
+    delete n.editable;
+    delete n.playerBase;
+  }
+}
+function unmarkHidden(html: string): string {
+  if (!html.includes(SECRET_ATTR)) return html;
+  const box = document.createElement("div");
+  box.innerHTML = html;
+  box.querySelectorAll("[" + SECRET_ATTR + "]").forEach((el) => el.removeAttribute(SECRET_ATTR));
+  return box.innerHTML;
 }
 // By id: a cloud update can replace the note's object while this waits, so it's looked up again
 // after every await.
-async function setNotePublic(id: string, value: boolean) {
+async function setNoteMode(id: string, mode: ShareMode) {
   const find = () => notes.find((n) => n.id === id);
   const note = find();
-  if (!note || value === !!note.public) return;
+  if (!note) return;
+  const before = shareMode(note);
+  if (mode === before) return;
+  // The open editor lets its lock go first (its last edit goes up while the note is still editable).
+  if (editorSession && editorSession.noteId === id) endEditorSession();
   const updatedAt = Date.now();
-  // Before anything awaits: a reconcile running meanwhile counts the note as public instead of
+  // Before anything awaits: a reconcile running meanwhile counts the note as shared instead of
   // taking its fresh copy down, and the newer time keeps an older cloud version from replacing it.
-  if (value) note.public = true;
-  else delete note.public;
+  applyShareMode(note, mode);
   note.updatedAt = updatedAt;
-  if (value) {
+  if (mode !== "private") {
     try {
       if (!publicKey) applyPublicKey(await ensurePublicKey());
       const current = find();
       if (!current) return;
-      await publishNote({ ...current, public: true, updatedAt });
+      applyShareMode(current, mode);
+      await publishNote({ ...current, updatedAt });
     } catch (err) {
       console.error("Notes: failed to publish note", err);
       const current = find();
-      if (current) delete current.public;
+      if (current) applyShareMode(current, before);
       renderList();
       updateBrandPill();
+      renderEditor();
       window.alert(strings().publishError);
       return;
     }
@@ -839,50 +1073,183 @@ async function setNotePublic(id: string, value: boolean) {
   }
   const current = find();
   if (!current) return;
-  if (value) current.public = true;
-  else delete current.public;
+  applyShareMode(current, mode);
+  // Editable: its hidden parts are shown (the confirmation said so), here as for the players.
+  if (mode === "editable") current.html = unmarkHidden(current.html);
   current.updatedAt = Math.max(current.updatedAt, updatedAt);
   markNoteDirty(id);
   refreshLinkersOf(id);
   await persist();
   renderList();
-  updateBrandPill();
+  if (id === activeId) renderEditor();
+  else updateBrandPill();
+}
+// "Undo the players' changes": the GM's version from before them (see mergeOwnShared), unless a
+// player is editing the note right now.
+async function undoPlayerEdits(id: string) {
+  const n = notes.find((x) => x.id === id);
+  if (!n || !n.playerBase) return;
+  const holder = lockHolder(id, editorUid());
+  if (holder) {
+    window.alert(strings().undoPlayerEditsBusy(holder.name || strings().someone));
+    return;
+  }
+  if (editorSession && editorSession.noteId === id) endEditorSession();
+  n.title = n.playerBase.title;
+  n.html = n.playerBase.html;
+  n.updatedAt = Date.now();
+  delete n.playerBase;
+  markNoteDirty(id);
+  void flushCloudSync();
+  refreshLinkersOf(id);
+  await persist();
+  renderList();
+  if (id === activeId) renderEditor();
 }
 
-// The "GM Notes" pill doubles as the active note's share switch: "Public", in green, while shared.
+// The GM's own shared copies, followed while signed in with a key: for editable notes, the players'
+// edits come back into the GM's notes from there, and their locks show in the GM's editor.
+let stopOwnShared: (() => void) | null = null;
+function followOwnShared() {
+  stopOwnShared?.();
+  stopOwnShared = null;
+  if (canPublish() && publicKey) stopOwnShared = watchOwnSharedNotes(publicKey, mergeOwnShared);
+}
+function mergeOwnShared(copies: SharedCopy[]) {
+  const me = getCurrentUser()?.uid ?? null;
+  let changed = false;
+  let activeChanged = false;
+  copies.forEach((c) => {
+    noteLockSeen(c.note.id, c.lock);
+    const local = notes.find((n) => n.id === c.note.id);
+    if (!local || !local.editable || !c.note.editable) return;
+    // Only a player's edit (the GM's own come from this account, here or on another device, which
+    // gets them through the account's own copy).
+    if (c.note.updatedAt <= local.updatedAt || !c.editedBy || c.editedBy === me) return;
+    // Taken from the first of a run of player edits: what "undo the players' changes" goes back to.
+    if (!local.playerBase) local.playerBase = { title: local.title, html: local.html, updatedAt: local.updatedAt };
+    local.title = c.note.title;
+    local.html = c.note.html;
+    local.updatedAt = c.note.updatedAt;
+    markNoteDirty(local.id);
+    changed = true;
+    if (local.id === activeId) activeChanged = true;
+  });
+  if (changed) {
+    void persist();
+    renderList();
+    if (activeChanged && !(editorSession && editorSession.busy())) renderEditor();
+  }
+  editorSession?.refreshLock();
+}
+
+// The "GM Notes" pill shows the active note's sharing ("Visible" in green, "Public" in amber) and,
+// for the GM, opens the menu to change it.
 const brandPill = document.getElementById("brandPill") as HTMLButtonElement;
 function sharingAvailable(): boolean {
   return role === "GM" && cloudSyncAvailable() && !!getActive();
 }
 function updateBrandPill() {
   const s = strings();
-  const isPublic = isPlayerView() || !!getActive()?.public;
+  const mode = isPlayerView() ? (getActive()?.editable ? "editable" : "visible") : shareMode(getActive());
   const sharing = sharingAvailable();
-  brandPill.textContent = isPublic ? s.brandPublic : "GM Notes";
-  brandPill.classList.toggle("public", isPublic);
+  brandPill.textContent = mode === "editable" ? s.brandEditable : mode === "visible" ? s.brandVisible : "GM Notes";
+  brandPill.classList.toggle("public", mode === "visible");
+  brandPill.classList.toggle("editable", mode === "editable");
   brandPill.classList.toggle("clickable", sharing);
   brandPill.tabIndex = sharing ? 0 : -1;
-  brandPill.title = !sharing ? "" : isPublic ? s.unpublishTitle : canPublish() ? s.publishTitle : s.publishSignedOutTitle;
-  if (sharing) brandPill.setAttribute("aria-pressed", String(isPublic));
-  else brandPill.removeAttribute("aria-pressed");
+  brandPill.title = !sharing ? "" : canPublish() || mode !== "private" ? s.shareMenuTitle : s.publishSignedOutTitle;
+  if (sharing) {
+    brandPill.setAttribute("aria-haspopup", "menu");
+    brandPill.setAttribute("aria-expanded", String(!shareMenu.hidden));
+  } else {
+    brandPill.removeAttribute("aria-haspopup");
+    brandPill.removeAttribute("aria-expanded");
+  }
+}
+const shareMenu = document.createElement("div");
+shareMenu.className = "share-menu";
+shareMenu.setAttribute("role", "menu");
+shareMenu.hidden = true;
+panel.appendChild(shareMenu);
+function closeShareMenu() {
+  if (shareMenu.hidden) return;
+  shareMenu.hidden = true;
+  brandPill.setAttribute("aria-expanded", "false");
+}
+function openShareMenu(note: Note) {
+  const s = strings();
+  const current = shareMode(note);
+  const options: [ShareMode, string, string][] = [
+    ["private", s.shareModePrivate, s.shareModePrivateHint],
+    ["visible", s.shareModeVisible, s.shareModeVisibleHint],
+    ["editable", s.shareModeEditable, s.shareModeEditableHint],
+  ];
+  shareMenu.innerHTML = "";
+  options.forEach(([mode, label, hint]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("role", "menuitemradio");
+    b.setAttribute("aria-checked", String(mode === current));
+    b.className = "share-option share-" + mode + (mode === current ? " current" : "");
+    b.innerHTML = `<span class="share-dot"></span><span class="share-text"><span class="share-label"></span><span class="share-hint"></span></span>`;
+    b.querySelector(".share-label")!.textContent = label;
+    b.querySelector(".share-hint")!.textContent = hint;
+    b.addEventListener("click", () => {
+      closeShareMenu();
+      chooseShareMode(note.id, mode);
+    });
+    shareMenu.appendChild(b);
+  });
+  shareMenu.hidden = false;
+  const p = panel.getBoundingClientRect();
+  const a = brandPill.getBoundingClientRect();
+  shareMenu.style.left = `${Math.max(4, a.left - p.left)}px`;
+  shareMenu.style.top = `${a.bottom - p.top + 4}px`;
+  brandPill.setAttribute("aria-expanded", "true");
+  (shareMenu.querySelector(".current") as HTMLElement | null)?.focus();
+}
+document.addEventListener("pointerdown", (ev) => {
+  if (!shareMenu.hidden && !shareMenu.contains(ev.target as Node) && ev.target !== brandPill) closeShareMenu();
+}, true);
+shareMenu.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") {
+    closeShareMenu();
+    brandPill.focus();
+  }
+});
+// Sharing more asks first (it can't be taken back once a player has seen it); sharing less doesn't.
+function chooseShareMode(id: string, mode: ShareMode) {
+  const note = notes.find((n) => n.id === id);
+  if (!note) return;
+  const current = shareMode(note);
+  if (mode === current) return;
+  if (mode !== "private" && !canPublish()) {
+    openSettings();
+    return;
+  }
+  if (mode === "private" || (mode === "visible" && current === "editable")) void setNoteMode(id, mode);
+  else openPublishConfirm(note, mode);
 }
 brandPill.addEventListener("click", () => {
   const active = getActive();
   if (!active || !sharingAvailable()) return;
-  if (active.public) void setNotePublic(active.id, false);
-  else if (!canPublish()) openSettings();
-  else openPublishConfirm(active);
+  if (!shareMenu.hidden) closeShareMenu();
+  else openShareMenu(active);
 });
 
-// Publishing can't be taken back once a player has read it, so it asks first; unpublishing doesn't.
 const publishConfirmOverlay = document.getElementById("publishConfirmOverlay") as HTMLElement;
-let pendingPublish: string | null = null;
-function openPublishConfirm(note: Note) {
-  pendingPublish = note.id;
+let pendingPublish: { id: string; mode: ShareMode } | null = null;
+function openPublishConfirm(note: Note, mode: ShareMode) {
+  const s = strings();
+  pendingPublish = { id: note.id, mode };
   const parts = secretPartCount(note.html);
+  document.getElementById("publishConfirmTitle")!.textContent = mode === "editable" ? s.publishEditableConfirmTitle : s.publishConfirmTitle;
+  document.getElementById("publishConfirmHint")!.textContent = mode === "editable" ? s.publishEditableConfirmHint : s.publishConfirmHint;
   const secretHint = document.getElementById("publishConfirmSecret")!;
   secretHint.hidden = !parts;
-  secretHint.textContent = parts ? strings().publishConfirmSecret(parts) : "";
+  secretHint.textContent = !parts ? "" : mode === "editable" ? s.publishEditableConfirmSecret(parts) : s.publishConfirmSecret(parts);
+  document.getElementById("publishConfirmBtn")!.textContent = mode === "editable" && parts ? s.publishEditableConfirmShowBtn : s.publishConfirmBtn;
   publishConfirmOverlay.hidden = false;
   (document.getElementById("publishConfirmBtn") as HTMLButtonElement).focus();
 }
@@ -894,10 +1261,10 @@ document.getElementById("publishConfirmBackdrop")!.addEventListener("click", clo
 document.getElementById("publishConfirmCloseBtn")!.addEventListener("click", closePublishConfirm);
 document.getElementById("publishCancelBtn")!.addEventListener("click", closePublishConfirm);
 document.getElementById("publishConfirmBtn")!.addEventListener("click", () => {
-  const id = pendingPublish;
+  const pending = pendingPublish;
   closePublishConfirm();
-  // Deleted meanwhile (from another device, say): setNotePublic finds nothing to publish.
-  if (id) void setNotePublic(id, true);
+  // Deleted meanwhile (from another device, say): setNoteMode finds nothing to publish.
+  if (pending) void setNoteMode(pending.id, pending.mode);
 });
 
 async function createNote(template?: Template) {
@@ -906,8 +1273,9 @@ async function createNote(template?: Template) {
   const note: Note = {
     id: "n" + Date.now(),
     title: source ? source.title : strings().newNoteDefaultTitle,
-    html: source ? source.html : "",
+    html: source ? expandSecretMarks(source.html) : "",
     updatedAt: Date.now(),
+    secretModel: SECRET_MODEL,
   };
   notes.unshift(note);
   activeId = note.id;
@@ -1181,6 +1549,7 @@ async function importNotesFromFiles(files: FileList) {
     window.alert(strings().importNoneFound);
     return;
   }
+  imported.forEach(migrateSecretModel);
   const newTemplates: Template[] = [];
   importedTemplates.forEach((t) => {
     if (!isDuplicateTemplate(t, [...templates, ...newTemplates])) newTemplates.push(t);
@@ -1234,26 +1603,37 @@ async function clearAllNotesWithConfirm() {
 
 // ---------- rich-text editor ----------
 let editorSelectionListener: (() => void) | null = null;
-function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: string | null, onSaved: () => void) {
-  const seed = noteId ? notes.find((n) => n.id === noteId) : undefined;
+// `player`: a player editing one of the room's editable notes (from `sharedNotes`), with what players
+// get of the editor: no hidden parts, no linked items, links only to notes shared with them.
+function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: string | null, onSaved: () => void, player = false) {
+  endEditorSession();
+  const pool = () => (player ? sharedNotes : notes);
+  const seed = noteId ? pool().find((n) => n.id === noteId) : undefined;
   if (!seed) {
     containerEl.innerHTML = `<div class="editor-empty">${escapeHtml(strings().editorEmpty)}</div>`;
     return;
   }
   const s = strings();
+  // Edited in the players' copy too, one person at a time (see the lock below).
+  const shared = player || !!(seed.public && seed.editable);
+  // A note the players edit has no hidden parts (see setNoteMode).
+  const noSecrets = () => shared;
 
   function currentNote(): Note | undefined {
-    return noteId ? notes.find((n) => n.id === noteId) : undefined;
+    return noteId ? pool().find((n) => n.id === noteId) : undefined;
   }
 
   const toolbarHtml = renderToolbar(idPrefix, s.toolbar);
 
   containerEl.innerHTML =
     toolbarHtml +
-    `<div class="title-row"><input class="note-title-input" id="${idPrefix}TitleInput" placeholder="${escapeHtml(s.titlePlaceholder)}" value="${escapeHtml(seed.title)}" /></div>` +
-    `<div class="linked-items" id="${idPrefix}LinkedItems" hidden></div>` +
+    `<div class="title-row"><input class="note-title-input" id="${idPrefix}TitleInput" placeholder="${escapeHtml(s.titlePlaceholder)}" value="${escapeHtml(seed.title)}" />` +
+    `<button type="button" class="connections-btn" id="${idPrefix}ConnectionsBtn" hidden aria-haspopup="dialog"><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6.6 9.4a2.8 2.8 0 0 0 4 0l2.3-2.3a2.8 2.8 0 0 0-4-4L7.8 4.2M9.4 6.6a2.8 2.8 0 0 0-4 0L3.1 8.9a2.8 2.8 0 0 0 4 4l1.1-1.1" stroke="currentColor" stroke-width="1.15" stroke-linecap="round"/></svg><span class="connections-count">0</span></button></div>` +
+    `<div class="lock-banner" id="${idPrefix}LockBanner" role="status" hidden></div>` +
     `<div class="editor-scroll"><div class="secret-layer" id="${idPrefix}SecretLayer" aria-hidden="true"></div><div class="editor-surface" id="${idPrefix}EditorSurface" contenteditable="true" data-placeholder="${escapeHtml(s.bodyPlaceholder)}"></div></div>` +
-    `<div class="editor-foot"><span class="save-state"><span class="pip" id="${idPrefix}SavePip"></span><span id="${idPrefix}SavedAgo">${escapeHtml(s.savedPrefix + s.savedInstant)}</span><button type="button" class="cloud-sync-btn" id="${idPrefix}CloudSyncBtn" hidden><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M5.3 12.3h6.4a2.7 2.7 0 0 0 .35-5.37 3.75 3.75 0 0 0-7.3-1.1A2.6 2.6 0 0 0 5.3 12.3Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button></span><span id="${idPrefix}WordCount">${escapeHtml(s.wordsCount(0))}</span></div>`;
+    `<div class="editor-foot"><span class="save-state"><span class="pip" id="${idPrefix}SavePip"></span><span id="${idPrefix}SavedAgo">${escapeHtml(s.savedPrefix + s.savedInstant)}</span><button type="button" class="cloud-sync-btn" id="${idPrefix}CloudSyncBtn" hidden><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M5.3 12.3h6.4a2.7 2.7 0 0 0 .35-5.37 3.75 3.75 0 0 0-7.3-1.1A2.6 2.6 0 0 0 5.3 12.3Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button></span><span class="foot-end"><span id="${idPrefix}WordCount">${escapeHtml(s.wordsCount(0))}</span>` +
+    `<span class="lock-state" id="${idPrefix}LockState" role="status" hidden><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M10.6 2.9l2.5 2.5-7.4 7.4-3.1.6.6-3.1 7.4-7.4Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><span class="lock-state-text"></span></span>` +
+    `<button type="button" class="finish-edit-btn" id="${idPrefix}FinishEditBtn" title="${escapeHtml(s.finishEditingTitle)}" hidden><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M3.2 8.4l3.1 3.1 6.5-6.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>${escapeHtml(s.finishEditing)}</button></span></div>`;
 
   const surface = document.getElementById(idPrefix + "EditorSurface") as HTMLElement;
   const tables = createTableEditor({
@@ -1276,11 +1656,36 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   // typing a block to land in and Enter a block to split from the very first keystroke; the placeholder
   // still shows normally since updateEmptyState() checks textContent, not innerHTML.
   surface.innerHTML = seed.html || "<p><br></p>";
-  linkedItemsRefresh = () => void refreshLinkedItems(seed.id, document.getElementById(idPrefix + "LinkedItems") as HTMLElement);
-  linkedItemsRefresh();
+  if (noSecrets()) surface.querySelectorAll("[" + SECRET_ATTR + "]").forEach((el) => el.removeAttribute(SECRET_ATTR));
+  if (player) {
+    containerEl.classList.add("player-editor");
+    document.querySelector(`#${idPrefix}Toolbar button[data-cmd="toggleSecret"]`)?.remove();
+  } else {
+    containerEl.classList.remove("player-editor");
+    if (noSecrets()) (document.querySelector(`#${idPrefix}Toolbar button[data-cmd="toggleSecret"]`) as HTMLElement | null)?.setAttribute("hidden", "");
+  }
+  const connectionsBtn = document.getElementById(idPrefix + "ConnectionsBtn") as HTMLElement;
+  connectionsBtn.addEventListener("click", toggleConnections);
+  closeConnections();
+  if (!player) {
+    linkedItemsRefresh = () => void refreshLinkedItems(seed.id, connectionsBtn);
+    linkedItemsRefresh();
+  } else {
+    linkedItemsRefresh = null;
+  }
   // Links show their notes' current titles (and which ones are gone); new titles are saved with the
-  // opening repair below, locally, without a new "edited" time.
-  const linksSynced = syncLinks(surface, linkTarget, s.untitled);
+  // opening repair below, locally, without a new "edited" time. A player's links reach only the notes
+  // shared with them; the rest read as plain text.
+  const linksSynced = syncLinks(
+    surface,
+    player
+      ? (id: string) => {
+          const target = sharedNotes.find((n) => n.id === id);
+          return target ? { title: target.title, gone: false } : null;
+        }
+      : linkTarget,
+    s.untitled
+  );
   updateEmptyState();
   updateWordCount();
 
@@ -1342,7 +1747,21 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   function scheduleSave() {
     const n = currentNote();
     if (!n) return;
+    // A hidden mark that got in (a paste from another note, say) is dropped: the line shows.
+    if (noSecrets() && surface.querySelector("[" + SECRET_ATTR + "]")) {
+      surface.querySelectorAll("[" + SECRET_ATTR + "]").forEach((el) => el.removeAttribute(SECRET_ATTR));
+      n.html = editorHtml();
+      paintSecret();
+    }
     n.updatedAt = Date.now();
+    if (shared) sharedEdited();
+    // A player's edits live in the players' copy only (sharedEdited sends them).
+    if (player) {
+      setSaveIndicator(true);
+      return;
+    }
+    // The GM's own edit: the players' changes before it are part of the note now.
+    if (n.playerBase) delete n.playerBase;
     markNoteDirty(n.id);
     if (saveTimer) clearTimeout(saveTimer);
     setSaveIndicator(true);
@@ -1356,6 +1775,175 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     pendingSaveFlush = fire;
     saveTimer = setTimeout(fire, 400);
   }
+
+  // ---------- a note the players edit: one editor at a time (see editLock.ts) ----------
+  // The first edit takes the note's lock (the editor stays editable meanwhile; if someone else got it
+  // first, what was typed goes back to their version). Edits go up shortly after each pause,
+  // renewing the lock; a minute without edits, or leaving the note, lets it go. While someone else
+  // holds it, the editor is read-only and says who.
+  const titleInputEl = document.getElementById(idPrefix + "TitleInput") as HTMLInputElement;
+  const lockBanner = document.getElementById(idPrefix + "LockBanner") as HTMLElement;
+  const lockStateEl = document.getElementById(idPrefix + "LockState") as HTMLElement;
+  const finishEditBtn = document.getElementById(idPrefix + "FinishEditBtn") as HTMLButtonElement;
+  const wordCountEl = document.getElementById(idPrefix + "WordCount") as HTMLElement;
+  let lockMine = false;
+  let lockTaking: Promise<boolean> | null = null;
+  let pushTimer: ReturnType<typeof setTimeout> | null = null;
+  let pushing: Promise<void> | null = null;
+  let lastEdit = 0;
+  let renewTimer: ReturnType<typeof setInterval> | null = null;
+  let lapseTimer: ReturnType<typeof setTimeout> | null = null;
+  let ended = false;
+  // The players' copy as this editor last had it (built from it, or sent to it): a later version of
+  // it with the same text is this one coming back, no reason to rebuild.
+  let sharedHtml = seed.html;
+  let sharedTitle = seed.title;
+  function editorName(): string {
+    return playerName || (player ? strings().someone : "GM");
+  }
+  // Why the editor is read-only, if it is: the GM is signed out, or someone else has the lock.
+  function lockReason(): { signedOut: true } | { holder: string } | null {
+    if (!shared || ended) return null;
+    if (!player && !canPublish()) return { signedOut: true };
+    if (lockMine || lockTaking) return null;
+    const holder = lockHolder(seed!.id, editorUid());
+    return holder ? { holder: holder.name || strings().someone } : null;
+  }
+  function refreshLock() {
+    if (!shared || ended) return;
+    const reason = lockReason();
+    const st = strings();
+    surface.contentEditable = reason ? "false" : "true";
+    titleInputEl.readOnly = !!reason;
+    document.getElementById(idPrefix + "Toolbar")?.classList.toggle("locked", !!reason);
+    // Signed out goes above the note (it's an instruction); who's editing, or "Done" while it's this
+    // editor, goes in the footer in the word count's place.
+    const signedOut = !!reason && "signedOut" in reason;
+    lockBanner.hidden = !signedOut;
+    lockBanner.textContent = signedOut ? st.editableSignedOut : "";
+    const holderText = reason && "holder" in reason ? st.lockedBy(reason.holder) : "";
+    lockStateEl.hidden = !holderText;
+    lockStateEl.title = holderText;
+    lockStateEl.querySelector(".lock-state-text")!.textContent = holderText;
+    finishEditBtn.hidden = !lockMine;
+    wordCountEl.hidden = !!holderText || lockMine;
+    if (lapseTimer) clearTimeout(lapseTimer);
+    lapseTimer = null;
+    const wait = lockLapsesIn(seed!.id, editorUid());
+    if (reason && wait) lapseTimer = setTimeout(refreshLock, wait + 50);
+  }
+  function takeLock(): Promise<boolean> {
+    if (lockMine) return Promise.resolve(true);
+    if (!lockTaking) {
+      lockTaking = takeSharedLock(seed!.id, editorName()).then((ok) => {
+        lockTaking = null;
+        if (ok) {
+          lockMine = true;
+          // Leaving meanwhile: letGo sends the last edit and lets the lock go, no renewing.
+          if (!ended) startRenew();
+        } else lockLost();
+        refreshLock();
+        return ok;
+      });
+    }
+    return lockTaking;
+  }
+  function startRenew() {
+    if (renewTimer) return;
+    renewTimer = setInterval(() => {
+      if (!lockMine) return;
+      if (Date.now() - lastEdit >= LOCK_IDLE) {
+        void letGo();
+        return;
+      }
+      if (!pushTimer && !pushing) {
+        void takeSharedLock(seed!.id, editorName()).then((ok) => {
+          if (!ok && lockMine) lockLost();
+        });
+      }
+    }, LOCK_RENEW);
+  }
+  function stopRenew() {
+    if (renewTimer) clearInterval(renewTimer);
+    renewTimer = null;
+  }
+  function sharedEdited() {
+    lastEdit = Date.now();
+    void takeLock();
+    if (pushTimer) clearTimeout(pushTimer);
+    pushTimer = setTimeout(() => void pushNow(), 1200);
+  }
+  // Sends what's on screen (not the note object: for a player, a live update replaces it with the
+  // version last sent).
+  async function pushNow() {
+    if (pushTimer) {
+      clearTimeout(pushTimer);
+      pushTimer = null;
+    }
+    if (pushing) await pushing;
+    const run = (async () => {
+      if (!(await takeLock())) return;
+      const edit = { title: titleInputEl.value, html: editorHtml(), updatedAt: Date.now() };
+      if (!(await saveSharedEdit(seed!.id, edit, editorName()))) {
+        lockLost();
+        return;
+      }
+      sharedHtml = sanitizeNoteHtml(edit.html);
+      sharedTitle = edit.title;
+      if (player && !pushTimer) {
+        setSaveIndicator(false);
+        onSaved();
+      }
+    })();
+    pushing = run;
+    await run;
+    if (pushing === run) pushing = null;
+  }
+  async function letGo() {
+    stopRenew();
+    if (lockTaking) await lockTaking;
+    if (pushTimer || pushing) await pushNow();
+    stopRenew();
+    if (!lockMine) return;
+    lockMine = false;
+    await releaseSharedLock(seed!.id);
+    refreshLock();
+  }
+  function lockLost() {
+    lockMine = false;
+    stopRenew();
+    if (pushTimer) {
+      clearTimeout(pushTimer);
+      pushTimer = null;
+    }
+    if (ended) return;
+    if (player) setSaveIndicator(false);
+    refreshLock();
+    // Someone else got there first: a player's screen goes back to their version (the GM's edits stay
+    // in the GM's own note, until a newer version of the players' comes back).
+    if (player) renderEditor(true);
+  }
+  // Done: the last edit goes up and the lock is let go now, not after a minute; typing again takes it back.
+  finishEditBtn.addEventListener("click", () => {
+    surface.blur();
+    titleInputEl.blur();
+    void letGo();
+  });
+  editorSession = {
+    noteId: seed.id,
+    player,
+    busy: () => lockMine || !!lockTaking || !!pushTimer || !!pushing,
+    html: () => sharedHtml,
+    title: () => sharedTitle,
+    refreshLock,
+    end: () => {
+      if (ended) return;
+      ended = true;
+      if (lapseTimer) clearTimeout(lapseTimer);
+      if (shared) void letGo();
+    },
+  };
+  refreshLock();
 
   (document.getElementById(idPrefix + "TitleInput") as HTMLInputElement).addEventListener("input", function (this: HTMLInputElement) {
     const n = currentNote();
@@ -2028,6 +2616,25 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   // Links are made editable for the command's length: Chrome's list and indent commands duplicate a
   // list item holding only something it can't edit. They're atomic again right after.
   function runKeepingPills(command: () => void) {
+    // A selection reaching from list lines into a table: Chrome's indent and list commands tear the
+    // table apart (cells pulled out into a margin block, the rest duplicated). They get only what
+    // comes before the table.
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount) {
+      const r = sel.getRangeAt(0);
+      const table = (Array.prototype.slice.call(surface.querySelectorAll(":scope > table")) as HTMLElement[]).find((t) => r.intersectsNode(t));
+      if (table && !table.contains(r.startContainer)) {
+        const prev = table.previousElementSibling;
+        if (prev) {
+          const cut = document.createRange();
+          cut.setStart(r.startContainer, r.startOffset);
+          cut.selectNodeContents(prev);
+          cut.setStart(r.startContainer, r.startOffset);
+          sel.removeAllRanges();
+          sel.addRange(cut);
+        }
+      }
+    }
     const marks = markPills(surface, getTouchedBlocks());
     const links = Array.prototype.slice.call(surface.querySelectorAll(".note-link")) as HTMLElement[];
     links.forEach((l) => l.setAttribute("contenteditable", "true"));
@@ -2824,6 +3431,8 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     if (!li || !surface.contains(li) || !li.parentElement || !li.parentElement.hasAttribute(CHECK_ATTR)) return;
     if (ev.clientX >= li.getBoundingClientRect().left) return;
     ev.preventDefault();
+    // Read-only (someone else is editing the note): the boxes stay as they are.
+    if (!surface.isContentEditable) return;
     pushHistory();
     li.toggleAttribute("data-checked");
     const n = currentNote();
@@ -2879,7 +3488,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     }
     const s = strings();
     const q = query.q.trim().toLowerCase();
-    pickerList = notes
+    pickerList = pool()
       .filter((n) => n.id !== noteId && (!q || (n.title || s.untitled).toLowerCase().includes(q)))
       .sort((a, b) => b.updatedAt - a.updatedAt);
     pickerIndex = Math.min(pickerIndex, Math.max(0, pickerList.length - 1));
@@ -3045,133 +3654,199 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   }
 
   // ---------- parts hidden from players (see secret.ts) ----------
-  // The GM sees them striped: data-secret on a block hidden itself, data-secret-in (view-side only,
-  // like data-folded) on one inside a hidden section.
+  // Each line is hidden on its own: a block, or a list item (secretUnits). The GM sees hidden lines
+  // boxed (lines hidden in a row share a box) with an eye beside each one: a click on it shows that
+  // line again. Hovering a line that isn't hidden shows a fainter eye that hides it. The toolbar's
+  // eye does the same for every line the selection is on. Settings can lock the eyes beside the text.
   const topBlocks = () => Array.prototype.slice.call(surface.children) as HTMLElement[];
+  const isHidden = (el: Element) => el.hasAttribute(SECRET_ATTR);
+  // The margin the eyes sit in is kept in every note the GM edits.
+  surface.classList.add("has-secret");
+  // A list item of the editor's lists (not of a table cell), holding `n`.
+  function itemOf(n: Node): HTMLElement | null {
+    const el = n.nodeType === 3 ? n.parentElement : (n as HTMLElement);
+    const li = el && el.closest ? (el.closest("li") as HTMLElement | null) : null;
+    return li && surface.contains(li) && !li.closest("td, th") ? li : null;
+  }
+  // The line (unit) holding a node: its list item, or its block.
+  const holderOf = (n: Node): HTMLElement | null => itemOf(n) || blockAt(n);
+  // The lines on screen: not inside a folded section.
+  function shownUnits(): HTMLElement[] {
+    return secretUnits(surface).filter((u) => {
+      const top = blockAt(u) || u;
+      return !top.hasAttribute("data-folded");
+    });
+  }
   function paintSecret() {
-    const blocks = topBlocks();
-    const covered = secretCoverage(blocks);
-    blocks.forEach((el, i) => el.toggleAttribute("data-secret-in", covered[i] && !el.hasAttribute(SECRET_ATTR)));
     drawSecret();
   }
-  // Each run of hidden blocks in a row is drawn as one box (gaps between its lines included), with
-  // an eye outside it to the right, on a layer under the text: boxes on the blocks themselves would
-  // stop at each block's edge. Redrawn whenever the blocks may have moved.
   const secretLayer = document.getElementById(idPrefix + "SecretLayer") as HTMLElement;
   let secretFrame = 0;
+  let eyeUnits: HTMLElement[] = [];
+  function unitBox(el: Element, scroller: HTMLElement, base: DOMRect) {
+    const r = el.getBoundingClientRect();
+    return { top: r.top - base.top + scroller.scrollTop, bottom: r.bottom - base.top + scroller.scrollTop, left: r.left - base.left, right: r.right - base.left };
+  }
   function drawSecret() {
     if (secretFrame) return;
     secretFrame = requestAnimationFrame(() => {
       secretFrame = 0;
       if (!surface.isConnected) return;
-      const blocks = topBlocks();
-      const covered = secretCoverage(blocks);
-      // Room for the eyes in the right margin, only in notes that have hidden parts.
-      surface.classList.toggle("has-secret", covered.some(Boolean));
       const scroller = surface.parentElement as HTMLElement;
       const base = scroller.getBoundingClientRect();
-      const runs: { top: number; bottom: number; left: number; right: number; blocks: HTMLElement[] }[] = [];
-      let run: (typeof runs)[number] | null = null;
-      blocks.forEach((el, i) => {
-        // A folded block isn't on screen (and can only follow a visible heading, which ends a run
-        // if it isn't hidden): it's only part of the run, for the eye to show it too.
-        if (el.hasAttribute("data-folded")) {
-          if (run) run.blocks.push(el);
-          return;
-        }
-        if (!covered[i]) {
+      const units = shownUnits();
+      type Run = { top: number; bottom: number; left: number; right: number };
+      const runs: Run[] = [];
+      let run: Run | null = null;
+      eyeUnits = [];
+      const eyes: string[] = [];
+      const s = strings();
+      const title = escapeHtml(secretEyeLocked ? s.secretEyeLocked : s.secretEyeShow);
+      units.forEach((u) => {
+        if (!isHidden(u)) {
           run = null;
           return;
         }
-        const r = el.getBoundingClientRect();
-        const top = r.top - base.top + scroller.scrollTop;
-        const bottom = r.bottom - base.top + scroller.scrollTop;
-        const left = r.left - base.left;
-        const right = r.right - base.left;
+        const b = unitBox(u, scroller, base);
         if (run) {
-          run.bottom = bottom;
-          run.left = Math.min(run.left, left);
-          run.right = Math.max(run.right, right);
-          run.blocks.push(el);
+          run.top = Math.min(run.top, b.top);
+          run.bottom = Math.max(run.bottom, b.bottom);
+          run.left = Math.min(run.left, b.left);
+          run.right = Math.max(run.right, b.right);
         } else {
-          run = { top, bottom, left, right, blocks: [el] };
+          run = { ...b };
           runs.push(run);
         }
+        eyes.push(`<div class="secret-eye${secretEyeLocked ? "" : " clickable"}" data-unit="${eyeUnits.length}" title="${title}" style="top:${b.top + 2}px;left:EYE_LEFTpx"></div>`);
+        eyeUnits.push(u);
       });
-      secretRuns = runs.map((r) => r.blocks);
-      const eyeTitle = escapeHtml(secretEyeLocked ? strings().secretEyeLocked : strings().secretEyeShow);
-      secretLayer.innerHTML = runs
-        .map(
-          (b, i) =>
-            `<div class="secret-box" style="top:${b.top - 3}px;left:${b.left - 4}px;width:${b.right - b.left + 8}px;height:${b.bottom - b.top + 6}px"></div>` +
-            `<div class="secret-eye${secretEyeLocked ? "" : " clickable"}" data-run="${i}" title="${eyeTitle}" style="top:${b.top + 2}px;left:${b.right + 6}px"></div>`
-        )
-        .join("");
+      // The eyes line up in the margin, right of the text.
+      const eyeLeft = surface.getBoundingClientRect().right - base.left - 24;
+      secretLayer.innerHTML =
+        runs
+          .map((b) => `<div class="secret-box" style="top:${b.top - 3}px;left:${b.left - 4}px;width:${b.right - b.left + 8}px;height:${b.bottom - b.top + 6}px"></div>`)
+          .join("") + eyes.join("").split("EYE_LEFT").join(String(Math.round(eyeLeft)));
+      secretLayer.appendChild(hoverEye);
+      hoverEye.hidden = true;
     });
   }
   redrawSecret = drawSecret;
-  // The eye shows its run to players again (unless Settings locks it): the whole run, with the
-  // section of a hidden heading in it. Undoable like any edit.
-  let secretRuns: HTMLElement[][] = [];
+  // The eye that hides a line, shown while hovering it.
+  const hoverEye = document.createElement("div");
+  hoverEye.className = "secret-eye hover clickable";
+  hoverEye.hidden = true;
+  let hoverUnit: HTMLElement | null = null;
+  // The margin right of the text, at a line's height: hovering there offers that line's eye (a
+  // line already hidden has its own). Tracked on the scrolling area, so the pointer can move from
+  // the margin onto the eye without it going away.
+  const scrollArea = surface.parentElement as HTMLElement;
+  let hoverFrame = 0;
+  let hoverY = 0;
+  let hoverX = 0;
+  function hideHoverEye() {
+    hoverEye.hidden = true;
+    hoverUnit = null;
+  }
+  scrollArea.addEventListener("mousemove", (ev) => {
+    hoverX = ev.clientX;
+    hoverY = ev.clientY;
+    if (hoverFrame) return;
+    hoverFrame = requestAnimationFrame(() => {
+      hoverFrame = 0;
+      const sr = surface.getBoundingClientRect();
+      const inMargin = hoverX >= sr.right - 30 && hoverX <= sr.right + 2;
+      if (secretEyeLocked || !inMargin || noSecrets()) {
+        hideHoverEye();
+        return;
+      }
+      const unit = shownUnits().find((u) => {
+        const r = u.getBoundingClientRect();
+        return hoverY >= r.top - 2 && hoverY <= r.bottom + 2;
+      });
+      if (!unit || isHidden(unit)) {
+        hideHoverEye();
+        return;
+      }
+      if (unit === hoverUnit && !hoverEye.hidden) return;
+      hoverUnit = unit;
+      const base = scrollArea.getBoundingClientRect();
+      const b = unitBox(unit, scrollArea, base);
+      hoverEye.title = strings().toolbar.secret;
+      hoverEye.style.top = `${b.top + 2}px`;
+      hoverEye.style.left = `${Math.round(sr.right - base.left - 24)}px`;
+      hoverEye.hidden = false;
+    });
+  });
+  scrollArea.addEventListener("mouseleave", hideHoverEye);
+  // Marks or unmarks lines, as one edit. A collapsed heading takes the lines folded under it along:
+  // they can't be seen to be picked one by one.
+  function setHidden(picked: HTMLElement[], hide: boolean) {
+    if (hide && noSecrets()) return;
+    const units: HTMLElement[] = [];
+    picked.forEach((u) => {
+      units.push(u);
+      if (u.parentElement === surface && u.hasAttribute("data-collapsed")) {
+        for (let n = u.nextElementSibling as HTMLElement | null; n && n.hasAttribute("data-folded"); n = n.nextElementSibling as HTMLElement | null) {
+          blockUnits(n).forEach((x) => { if (!units.includes(x)) units.push(x); });
+        }
+      }
+    });
+    pushHistory();
+    units.forEach((u) => {
+      if (hide) u.setAttribute(SECRET_ATTR, "");
+      else u.removeAttribute(SECRET_ATTR);
+    });
+    secretBefore = null;
+    paintSecret();
+    const n = currentNote();
+    if (n) n.html = editorHtml();
+    scheduleSave();
+    if (hide) pushSecretNow();
+    updateToolbarState();
+  }
   secretLayer.addEventListener("mousedown", (ev) => {
     // Keeps the caret (and focus) in the note.
     if ((ev.target as HTMLElement).closest(".secret-eye")) ev.preventDefault();
   });
   secretLayer.addEventListener("click", (ev) => {
     const eye = (ev.target as HTMLElement).closest(".secret-eye.clickable") as HTMLElement | null;
-    const run = eye ? secretRuns[Number(eye.dataset.run)] : null;
-    if (!run || secretEyeLocked) return;
-    pushHistory();
-    run.forEach((el) => el.removeAttribute(SECRET_ATTR));
-    secretBefore = null;
-    paintSecret();
-    const n = currentNote();
-    if (n) n.html = editorHtml();
-    scheduleSave();
-    updateToolbarState();
+    if (!eye || secretEyeLocked) return;
+    if (eye === hoverEye) {
+      if (hoverUnit && surface.contains(hoverUnit)) setHidden([hoverUnit], true);
+      hoverEye.hidden = true;
+      hoverUnit = null;
+      return;
+    }
+    const unit = eyeUnits[Number(eye.dataset.unit)];
+    if (unit && surface.contains(unit)) setHidden([unit], false);
   });
   new ResizeObserver(drawSecret).observe(surface);
-  // The blocks the selection is on (with whether each is hidden): a selection merely ending at the
-  // very start of a block, as a triple-clicked line does, isn't on that one.
-  function secretSelection(): { blocks: HTMLElement[]; covered: boolean[] } {
+  // The lines the selection is on. A selection merely ending at the very start of a line, as a
+  // triple-clicked line does, isn't on that one.
+  function secretSelection(): HTMLElement[] {
     const sel = window.getSelection();
     const r = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
-    if (!r || !surface.contains(r.commonAncestorContainer)) return { blocks: [], covered: [] };
-    const all = topBlocks();
-    const cov = secretCoverage(all);
-    const blocks: HTMLElement[] = [];
-    const covered: boolean[] = [];
-    all.forEach((el, i) => {
-      if (!SECRET_TAGS.test(el.tagName) || !r.intersectsNode(el)) return;
-      if (!r.collapsed && !el.contains(r.startContainer) && el.contains(r.endContainer)) {
+    if (!r || !surface.contains(r.commonAncestorContainer)) return [];
+    if (r.collapsed) {
+      const u = holderOf(r.startContainer);
+      return u ? [u] : [];
+    }
+    return secretUnits(surface).filter((u) => {
+      if (!r.intersectsNode(u)) return false;
+      if (!u.contains(r.startContainer) && u.contains(r.endContainer)) {
         const before = document.createRange();
-        before.setStart(el, 0);
+        before.setStart(u, 0);
         before.setEnd(r.endContainer, r.endOffset);
-        if (before.toString().replace(/\u200b/g, "") === "" && !before.cloneContents().querySelector("hr, table, br")) return;
+        if (before.toString().replace(/\u200b/g, "") === "" && !before.cloneContents().querySelector("hr, table, br")) return false;
       }
-      blocks.push(el);
-      covered.push(cov[i]);
+      return true;
     });
-    return { blocks, covered };
   }
-  // The toolbar's eye: hides the selected blocks, or shows them again if all of them are hidden. A
-  // block hidden because its whole section is stays hidden: that's the section's heading's to undo.
+  // The toolbar's eye: hides the lines the selection is on, or shows them if all of them are hidden.
   function toggleSecret() {
-    const { blocks, covered } = secretSelection();
-    if (!blocks.length) return;
-    const show = blocks.every((_b, i) => covered[i]);
-    pushHistory();
-    blocks.forEach((el, i) => {
-      if (show) el.removeAttribute(SECRET_ATTR);
-      else if (!covered[i]) el.setAttribute(SECRET_ATTR, "");
-    });
-    secretBefore = null;
-    paintSecret();
-    const n = currentNote();
-    if (n) n.html = editorHtml();
-    scheduleSave();
-    if (!show) pushSecretNow();
-    updateToolbarState();
+    const units = secretSelection();
+    if (!units.length) return;
+    setHidden(units, !units.every(isHidden));
   }
   // A public note whose hidden parts grew goes up right away, not after the usual wait: what was
   // just hidden shouldn't stay in front of the players for those seconds.
@@ -3179,23 +3854,20 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     const n = currentNote();
     if (n && n.public) void flushCloudSync();
   }
-  // Edits must never make a hidden part public by accident. Before any edit that can move content
-  // between blocks (anything but typing at a caret), secretSnapshot() records what's hidden; after
-  // it, guardSecret() hides whatever now holds what was hidden: a hidden line merged into the one
-  // before it, the lines of a hidden section whose heading stopped being one (each then hidden on
-  // its own), content moved into a list or out of one. Blocks the edit created out of a selection
-  // that touched something hidden (a list made from it, lines pasted into it) are hidden too. Merging
-  // lines, Chrome rebuilds the text as new nodes, so a hidden line the edit removed is also followed
-  // by its text: what of it the edit didn't delete, found in the line the caret ends up in. It errs
-  // towards hiding: what it hides shows striped, and the eye shows it again.
+  // Edits must never make a hidden line public by accident. Before any edit that can move content
+  // between lines (anything but typing at a caret), secretSnapshot() records what's hidden; after
+  // it, guardSecret() hides whatever line now holds what was hidden: a hidden line merged into the
+  // one before it, content moved into a list or out of one. Lines the edit created out of a
+  // selection that touched something hidden (a list made from it, lines pasted into it) are hidden
+  // too. Merging lines, Chrome rebuilds the text as new nodes, so a hidden line the edit removed is
+  // also followed by its text: what of it the edit didn't delete, found in the line the caret ends up
+  // in. It errs towards hiding: what it hides shows boxed, and its eye shows it again.
   const squash = (s: string) => s.replace(/[\s\u00a0\u200b]/g, "");
-  let secretBefore: { covered: HTMLElement[]; nodes: Node[]; top: Set<Element>; touched: boolean; rest: Map<HTMLElement, string> } | null = null;
+  let secretBefore: { units: HTMLElement[]; nodes: Node[]; top: Set<Element>; items: Set<Element>; touched: boolean; rest: Map<HTMLElement, string> } | null = null;
   function secretSnapshot() {
-    const blocks = topBlocks();
-    const cov = secretCoverage(blocks);
-    const covered = blocks.filter((_b, i) => cov[i]);
+    const units = secretUnits(surface).filter(isHidden);
     const nodes: Node[] = [];
-    covered.forEach((el) => {
+    units.forEach((el) => {
       const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
       while (walker.nextNode()) {
         const node = walker.currentNode;
@@ -3206,11 +3878,11 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     const sel = window.getSelection();
     const r = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
     const inEditor = !!r && surface.contains(r.commonAncestorContainer);
-    const touched = inEditor && covered.some((el) => r!.intersectsNode(el));
+    const touched = inEditor && units.some((el) => r!.intersectsNode(el));
     // Each hidden line's text the edit can't delete: all of it, or what follows the selection when
     // the selection ends inside it (none when it ends after it).
     const rest = new Map<HTMLElement, string>();
-    covered.forEach((el) => {
+    units.forEach((el) => {
       let text = el.textContent || "";
       if (inEditor && r!.intersectsNode(el)) {
         if (!el.contains(r!.endContainer)) return;
@@ -3221,38 +3893,61 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
       }
       if (squash(text)) rest.set(el, squash(text));
     });
-    secretBefore = { covered, nodes, top: new Set(blocks), touched, rest };
+    const items = new Set<Element>(Array.prototype.slice.call(surface.querySelectorAll("li")) as Element[]);
+    secretBefore = { units, nodes, top: new Set(topBlocks()), items, touched, rest };
   }
   // Returns whether it hid anything.
   function guardSecret(): boolean {
     const snap = secretBefore;
     secretBefore = null;
     if (!snap) return false;
-    const blocks = topBlocks();
-    const cov = secretCoverage(blocks);
-    const visible = new Set(blocks.filter((_b, i) => !cov[i]));
-    const hide = new Set<HTMLElement>();
-    const holder = (n: Node) => {
-      if (!n.isConnected || n === surface || !surface.contains(n)) return;
-      const top = blockAt(n);
-      if (top && visible.has(top)) hide.add(top);
+    const hiddenNow = (n: Node): boolean => {
+      const h = holderOf(n);
+      return !!h && isHidden(h);
     };
-    snap.covered.forEach(holder);
-    snap.nodes.forEach(holder);
+    const hide = new Set<HTMLElement>();
+    const consider = (n: Node) => {
+      if (!n.isConnected || n === surface || !surface.contains(n)) return;
+      if (hiddenNow(n)) return;
+      const h = holderOf(n);
+      if (h) hide.add(h);
+    };
+    snap.units.forEach(consider);
+    snap.nodes.forEach(consider);
     const sel = window.getSelection();
-    const caretBlock = sel && sel.rangeCount ? blockAt(sel.getRangeAt(0).startContainer) : null;
-    if (caretBlock && visible.has(caretBlock)) {
-      const text = squash(caretBlock.textContent || "");
+    const caretUnit = sel && sel.rangeCount ? holderOf(sel.getRangeAt(0).startContainer) : null;
+    if (caretUnit && !isHidden(caretUnit)) {
+      const text = squash(caretUnit.textContent || "");
       snap.rest.forEach((rest, el) => {
-        if (!el.isConnected && text.includes(rest)) hide.add(caretBlock);
+        if (!el.isConnected && text.includes(rest)) hide.add(caretUnit);
       });
     }
-    if (snap.touched) blocks.forEach((el) => { if (!snap.top.has(el) && visible.has(el)) hide.add(el); });
+    if (snap.touched) {
+      topBlocks().forEach((el) => { if (!snap.top.has(el) && !hiddenNow(el)) hide.add(el); });
+      (Array.prototype.slice.call(surface.querySelectorAll("li")) as HTMLElement[]).forEach((li) => {
+        if (!snap.items.has(li) && !li.closest("td, th") && !isHidden(li)) hide.add(li);
+      });
+    }
     let hid = false;
     hide.forEach((el) => {
-      if (!SECRET_TAGS.test(el.tagName)) return;
-      el.setAttribute(SECRET_ATTR, "");
-      hid = true;
+      // A list hides by its items.
+      const targets = /^(UL|OL)$/.test(el.tagName) ? (Array.prototype.slice.call(el.querySelectorAll("li")) as HTMLElement[]) : [el];
+      targets.forEach((t) => {
+        if (t.tagName !== "LI" && !SECRET_TAGS.test(t.tagName)) return;
+        if (isHidden(t)) return;
+        t.setAttribute(SECRET_ATTR, "");
+        hid = true;
+      });
+    });
+    // A list carries no mark of its own (its items do), but Chrome's list commands copy a hidden
+    // line's mark onto the list they make: it goes to the items, so none of them comes out shown.
+    (Array.prototype.slice.call(surface.querySelectorAll("ul[data-secret], ol[data-secret]")) as HTMLElement[]).forEach((list) => {
+      list.removeAttribute(SECRET_ATTR);
+      (Array.prototype.slice.call(list.querySelectorAll("li")) as HTMLElement[]).forEach((li) => {
+        if (isHidden(li)) return;
+        li.setAttribute(SECRET_ATTR, "");
+        hid = true;
+      });
     });
     if (hid) paintSecret();
     return hid;
@@ -3277,7 +3972,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   // could overwrite that edit. The repaired version reaches the cloud with the next real edit.
   if (repairStructure() || linksSynced) {
     seed.html = editorHtml();
-    void persist();
+    if (!player) void persist();
   }
 
   // Collapsing/expanding is saved locally only: it neither bumps the note's "edited" time (which
@@ -3287,7 +3982,7 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
     const n = currentNote();
     if (n) {
       n.html = editorHtml();
-      void persist();
+      if (!player) void persist();
     }
   }
   // The editor must always hold at least one real block. Backspace/Delete in a note whose only block
@@ -3595,8 +4290,8 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
 
     const secretBtn = document.querySelector(`#${idPrefix}Toolbar button[data-cmd="toggleSecret"]`);
     if (secretBtn) {
-      const { blocks, covered } = secretSelection();
-      const on = blocks.length > 0 && blocks.every((_b, i) => covered[i]);
+      const units = secretSelection();
+      const on = units.length > 0 && units.every((el) => el.hasAttribute(SECRET_ATTR));
       secretBtn.classList.toggle("active", on);
       secretBtn.setAttribute("aria-pressed", String(on));
     }
@@ -3619,9 +4314,26 @@ function buildNoteEditor(containerEl: HTMLElement, idPrefix: string, noteId: str
   }
 }
 
-function renderEditor() {
+// `force`: a player's editor is rebuilt even if it shows the note's current version.
+function renderEditor(force = false) {
   updateBrandPill();
   if (isPlayerView()) {
+    const active = getActive();
+    if (active && active.editable) {
+      const session = editorSession;
+      // Their own edit coming back, or one to another note: this editor stays as it is.
+      if (!force && session && session.player && session.noteId === active.id && (session.busy() || (session.html() === active.html && session.title() === active.title))) {
+        session.refreshLock();
+        return;
+      }
+      const sameNote = !!session && session.player && session.noteId === active.id;
+      const prevScroll = sameNote ? editorPaneEl.querySelector(".editor-scroll")?.scrollTop ?? 0 : 0;
+      shownShared = null;
+      buildNoteEditor(editorPaneEl, "gm", active.id, () => renderList(), true);
+      const scroller = editorPaneEl.querySelector(".editor-scroll");
+      if (scroller && prevScroll) scroller.scrollTop = prevScroll;
+      return;
+    }
     renderSharedNote();
     return;
   }
@@ -3645,8 +4357,9 @@ function startSharedWatch() {
   if (publicKey) {
     stopSharedWatch = watchSharedNotes(
       publicKey,
-      (list) => {
-        sharedNotes = list;
+      (copies) => {
+        copies.forEach((c) => noteLockSeen(c.note.id, c.lock));
+        sharedNotes = copies.map((c) => c.note);
         sharedState = "ready";
         if (!sharedNotes.some((n) => n.id === playerActiveId)) {
           const newest = sharedNotes.slice().sort((a, b) => b.updatedAt - a.updatedAt)[0];
@@ -3685,6 +4398,11 @@ function headingKeys(surface: HTMLElement): [HTMLElement, string][] {
   });
 }
 function renderSharedNote() {
+  if (editorSession) {
+    endEditorSession();
+    shownShared = null;
+  }
+  editorPaneEl.classList.remove("player-editor");
   const s = strings();
   const note = getActive();
   if (!note) {
@@ -3762,7 +4480,7 @@ function closeDropdown() {
   document.removeEventListener("keydown", onDocKeydown, true);
 }
 function onDocPointerDown(ev: Event) {
-  if (!noteSwitcher.contains(ev.target as Node)) closeDropdown();
+  if (!noteSwitcher.contains(ev.target as Node) && !rowMenu.contains(ev.target as Node)) closeDropdown();
 }
 function onDocKeydown(ev: KeyboardEvent) {
   if (ev.key === "Escape") { closeDropdown(); (switcherTrigger as HTMLElement).focus(); }
@@ -4200,7 +4918,7 @@ const sizeHint = document.getElementById("sizeHint")!;
 
   // Double-click: back to the default size. Must match action.width/height in public/manifest.json
   // (the whole iframe, margin included); the panel itself goes back to its CSS default (100%).
-  const DEFAULT_IFRAME_W = 434;
+  const DEFAULT_IFRAME_W = 439;
   const DEFAULT_IFRAME_H = 580;
   handle.addEventListener("dblclick", () => {
     panel.style.width = "";
@@ -4265,6 +4983,7 @@ function mergeCloudNotes(cloudNotes: Note[], removedIds: string[]) {
     listChanged = true;
   });
   cloudNotes.forEach((cloudNote) => {
+    if (migrateSecretModel(cloudNote)) markNoteDirty(cloudNote.id);
     const local = notes.find((n) => n.id === cloudNote.id) || trash.find((t) => t.id === cloudNote.id);
     if (!local || cloudNote.updatedAt > local.updatedAt) {
       if (local) take(cloudNote.id);
@@ -4297,6 +5016,9 @@ function applyCloudAuthState(user: User | null) {
     // Public copies wait for the account's notes: until then this device may be missing some.
     stopCloudWatch = watchCloudNotes(currentRoomIdForCloud, mergeCloudNotes, reconcilePublicNotes);
   }
+  followOwnShared();
+  // A public note can be edited only signed in.
+  editorSession?.refreshLock();
   if (user) {
     // Templates aren't per room, so they sync regardless of which room this is.
     stopTemplateWatch = watchCloudTemplates(
@@ -4316,16 +5038,18 @@ let currentRoomIdForCloud: string | null = null;
 
 // ---------- boot ----------
 async function boot() {
-  const [initialNotes, initialLanguage, initialAccent, initialRole, initialEyeLocked, initialItemLinks] = await Promise.all([
+  const [initialNotes, initialLanguage, initialAccent, initialRole, initialEyeLocked, initialItemLinks, initialSort] = await Promise.all([
     getNotes(),
     getLanguage(),
     getAccentPref(),
     OBR.player.getRole(),
     getSecretEyeLocked(),
     getItemLinksEnabled(),
+    getNoteSort(),
   ]);
   secretEyeLocked = initialEyeLocked;
   itemLinksEnabled = initialItemLinks;
+  noteSort = initialSort;
   notes = initialNotes;
   try {
     trash = await getTrash();
@@ -4334,6 +5058,14 @@ async function boot() {
     console.error("Notes: failed to load the trash", err);
   }
   if (purgeExpiredTrash()) void persist();
+  // Notes from before each line was hidden on its own (see secret.ts): converted once, keeping what
+  // players see the same. Saved locally; the cloud copy carries the conversion (same edit time, so
+  // no other device takes it for a newer version).
+  const converted = [...notes, ...trash].filter(migrateSecretModel);
+  if (converted.length) {
+    converted.forEach((n) => markNoteDirty(n.id));
+    void persist();
+  }
   try {
     publicKey = await getPublicKey();
   } catch (err) {
@@ -4343,6 +5075,11 @@ async function boot() {
   language = initialLanguage;
   accentPref = initialAccent;
   role = initialRole;
+  try {
+    playerName = await OBR.player.getName();
+  } catch (err) {
+    console.error("Notes: failed to read the player's name", err);
+  }
   activeId = notes.length ? notes[0].id : null;
   try {
     templates = await getTemplates();
@@ -4365,9 +5102,11 @@ async function boot() {
   watchPublicKey(applyPublicKey);
 
   OBR.player.onChange((player) => {
+    playerName = player.name;
     if (player.role !== role) {
       role = player.role;
       applyRoleView();
+      followOwnShared();
     }
   });
 

@@ -14,7 +14,7 @@ learn-more: https://github.com/nachoijp/owlbear-gm-notes#readme
 
 A rich-text note-taking panel for the GM. Your notes stay private unless
 you choose to share one: players who open GM Notes see only the notes
-you made public, read-only.
+you shared, to read or, if you let them, to edit.
 
 ![GM Notes](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/header.png)
 
@@ -30,7 +30,7 @@ you made public, read-only.
 
 ![Pills in every color, and toggles that fold the lines under them](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-formatting.png)
 
-![Switching between notes, with search](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-notes.png)
+![Switching between notes: search, a pinned note, the ⋯ menu and the sort order](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-notes.png)
 
 ## Collapsible sections
 
@@ -57,9 +57,13 @@ fit the column to its text. Tables wider than the panel scroll sideways.
 Type `[[` in a note to link to another one; click the link to open it.
 Right-click any item on the map (a token, a door, a marker…) and choose
 **Link note** to tie a note to it, then **Open note** from that same menu
-whenever you need it. Players only ever see links to notes you've shared.
+whenever you need it. The button at the end of a note's title lists its
+linked items and the notes that link to it. Players only ever see links to
+notes you've shared.
 
-![A note linked to a token, with a link to another note and the [[ picker open](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-links.png)
+![A link to another note, and the note picker open](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-links.png)
+
+![A note's connections: the map items linked to it and the notes that link to it](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-connections.png)
 
 ![Right-click a token: Link note](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-link-menu.png)
 
@@ -76,17 +80,22 @@ and can be renamed or deleted from the **+** menu.
 
 ## Sharing notes with players
 
-Signed in, open a note and click the **GM Notes** pill to share it. After
-you confirm, the pill turns green and reads **Public**. Players then see
-that note when they open GM Notes. They can read, search and fold it, but
-not edit it, and your changes reach them live. Click the pill again to
-stop sharing. Parts you hide with the eye button never reach players:
-a hidden heading takes its whole section with it. If someone no longer in the room might still have access,
-**Regenerate key** in Settings cuts them off.
+Signed in, open a note and click the **GM Notes** pill to share it:
+**Visible** (green) for players to read it, or **Public** (orange) for
+them to edit it too, one person at a time: everyone else sees who's
+editing, and **Done** frees the note. Your changes reach them live, theirs reach you, and **Undo the
+players' changes** in the note's ⋯ menu brings your version back. Pick
+**Private** to stop sharing. Parts you hide with the eye button never
+reach players: each line hides on its own, from a whole paragraph to a
+single list item (a public note has no hidden parts). If someone no
+longer in the room might still have access, **Regenerate key** in
+Settings cuts them off.
 
-![A shared note, as the GM sees it: a hidden part in its box](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-sharing-gm.png)
+![The GM Notes pill's menu: Private, Visible, and Public](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-sharing-menu.png)
 
-![The same note, as players see it: the hidden part isn't there](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-sharing-player.png)
+![A public note: whoever edits it has a Done button (left); everyone else sees who's editing (right)](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-sharing-public.png)
+
+![Hidden lines, as the GM sees them (left) and as players see the same note (right)](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-sharing-hidden.png)
 
 ## Notes live on your device — with optional cloud sync
 
@@ -98,8 +107,8 @@ you want. Exporting all your notes includes your templates too.
 
 Want your notes and templates on more than one device automatically?
 Sign in with Google from Settings — that's the only setup needed. It's entirely
-optional, and only you can see your own notes, except the ones you make
-public.
+optional, and only you can see your own notes, except the ones you
+share.
 
 ![Settings, backup, and storage stats](https://raw.githubusercontent.com/nachoijp/owlbear-gm-notes/main/docs/screenshot-settings.png)
 

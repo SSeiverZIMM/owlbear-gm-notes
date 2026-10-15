@@ -439,8 +439,8 @@ export function itemToLine(li: HTMLElement, surface: HTMLElement): HTMLElement |
   FIRST_PIECE_ONLY.forEach((a) => after.removeAttribute(a));
   after.appendChild(tail.extractContents());
   const line = top.tagName === "BLOCKQUOTE" ? (after.cloneNode(false) as HTMLElement) : document.createElement("p");
-  // An item of a hidden list is a hidden line.
-  if (top.hasAttribute(SECRET_ATTR)) line.setAttribute(SECRET_ATTR, "");
+  // An item of a hidden list, or a hidden item, is a hidden line.
+  if (top.hasAttribute(SECRET_ATTR) || li.hasAttribute(SECRET_ATTR)) line.setAttribute(SECRET_ATTR, "");
   while (li.firstChild) line.appendChild(li.firstChild);
   if (!line.hasChildNodes()) line.appendChild(document.createElement("br"));
   li.remove();
