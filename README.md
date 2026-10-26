@@ -3,6 +3,8 @@
 > **中文说明 / Chinese fork note**:这是 [nachoijp/owlbear-gm-notes](https://github.com/nachoijp/owlbear-gm-notes) 的汉化分支,新增了**简体中文**界面(设置 → 语言 → 中文)。原有的西班牙语和英语完整保留,默认语言仍为英语,每个玩家切换后各自记忆。同时将默认模板(团前准备、NPC、地点、怪物卡等)与格式演示笔记一并汉化。
 >
 > **Chinese fork of [nachoijp/owlbear-gm-notes](https://github.com/nachoijp/owlbear-gm-notes) adding a Simplified Chinese interface (Settings → Language → 中文). Spanish and English remain fully intact; English stays the default. Built-in templates and the formatting demo note are localized as well.**
+>
+> 📖 **中文使用指南：[README.zh-CN.md](README.zh-CN.md)**
 
 An [Owlbear Rodeo](https://www.owlbear.rodeo/) extension for a private,
 rich-text campaign journal for the GM, with the notes you choose shared
