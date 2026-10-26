@@ -3,7 +3,7 @@
 // these values. Paste the `firebaseConfig` object shown in Firebase Console →
 // Project Settings → General → Your apps → (web app) here, replacing the placeholders below.
 export const firebaseConfig = {
-  apiKey: "AIzaSyBjz6BJMJU1F6gw3xv10bWj15dBXpP_N7s",
+  apiKey: "AIzaSyBjz6BjMJUjF6gw3xv1ObWj15dBXpP_N7s",
   authDomain: "gmotescn.firebaseapp.com",
   projectId: "gmotescn",
   storageBucket: "gmotescn.firebasestorage.app",
