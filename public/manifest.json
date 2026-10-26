@@ -1,16 +1,16 @@
 {
-  "name": "GM Notes",
+  "name": "GM Notes 中文版",
   "version": "2.0.0",
   "manifest_version": 3,
   "author": "Ignacio Pedraza",
-  "homepage_url": "https://github.com/nachoijp/owlbear-gm-notes",
-  "icon": "https://notes.ijpedraza.com/logo.svg",
-  "description": "Keep prep, secrets and stat blocks one click away — a GM journal with tables, folding sections, templates and player sharing.",
-  "background_url": "/background.html",
+  "homepage_url": "https://github.com/SSeiverZIMM/owlbear-gm-notes",
+  "icon": "https://env-00jy6try6vgy-static.normal.cloudstatic.cn/GMnotesCN/logo.svg",
+  "description": "跑团 GM 的富文本笔记日志：表格、折叠区块、模板、隐藏段落与玩家共享。本汉化分支新增简体中文界面。",
+  "background_url": "https://env-00jy6try6vgy-static.normal.cloudstatic.cn/GMnotesCN/background.html",
   "action": {
     "title": "GM Notes",
-    "icon": "https://notes.ijpedraza.com/icon-toolbar.png",
-    "popover": "/",
+    "icon": "https://env-00jy6try6vgy-static.normal.cloudstatic.cn/GMnotesCN/icon-toolbar.png",
+    "popover": "https://env-00jy6try6vgy-static.normal.cloudstatic.cn/GMnotesCN/",
     "width": 439,
     "height": 580
   }
