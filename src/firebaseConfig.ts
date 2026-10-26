@@ -3,12 +3,12 @@
 // these values. Paste the `firebaseConfig` object shown in Firebase Console →
 // Project Settings → General → Your apps → (web app) here, replacing the placeholders below.
 export const firebaseConfig = {
-  apiKey: "AIzaSyBPMj3EUxaKSFUH5BmSDhnfLhgscf0Ambo",
-  authDomain: "gm-notes-sync.firebaseapp.com",
-  projectId: "gm-notes-sync",
-  storageBucket: "gm-notes-sync.firebasestorage.app",
-  messagingSenderId: "2156145409",
-  appId: "1:2156145409:web:20947130426053487d8900",
+  apiKey: "AIzaSyBjz6BJMJU1F6gw3xv10bWj15dBXpP_N7s",
+  authDomain: "gmotescn.firebaseapp.com",
+  projectId: "gmotescn",
+  storageBucket: "gmotescn.firebasestorage.app",
+  messagingSenderId: "197596023117",
+  appId: "1:197596023117:web:12e9ebddd12350032d8f04",
 };
 
 // Cloud sync is entirely optional and only activates once this looks like a real config — this lets
