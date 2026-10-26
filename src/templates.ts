@@ -221,6 +221,15 @@ function demoHtml(t: Record<string, string>, tables: DemoTables): string {
 
 const DEFAULTS: Record<BuiltinTemplateId, Record<Language, TemplateSpec>> = {
   npc: {
+    zh: {
+      title: "NPC",
+      html:
+        section("概述", fields(["角色定位", "外貌", "性格", "口头禅或习惯"])) +
+        section("动机", fields(["想要什么", "害怕什么"])) +
+        section("知晓或隐瞒之事", EMPTY_LIST) +
+        section("人际关系", EMPTY_LIST) +
+        section("笔记", EMPTY_PARAGRAPH),
+    },
     es: {
       title: "PNJ",
       html:
@@ -241,6 +250,15 @@ const DEFAULTS: Record<BuiltinTemplateId, Record<Language, TemplateSpec>> = {
     },
   },
   location: {
+    zh: {
+      title: "地点",
+      html:
+        section("第一印象", fields(["视觉", "听觉", "嗅觉"])) +
+        section("谁在这里", EMPTY_LIST) +
+        section("正在发生什么", EMPTY_PARAGRAPH) +
+        section("秘密", EMPTY_LIST) +
+        section("剧情钩子", EMPTY_LIST),
+    },
     es: {
       title: "Lugar",
       html:
@@ -261,6 +279,16 @@ const DEFAULTS: Record<BuiltinTemplateId, Record<Language, TemplateSpec>> = {
     },
   },
   sessionPrep: {
+    zh: {
+      title: "团前准备",
+      html:
+        section("开场", EMPTY_PARAGRAPH) +
+        section("可能的场景", EMPTY_LIST) +
+        section("秘密与线索", EMPTY_LIST) +
+        section("NPC", EMPTY_LIST) +
+        section("地点", EMPTY_LIST) +
+        section("奖励", EMPTY_LIST),
+    },
     es: {
       title: "Preparación de sesión",
       html:
@@ -283,6 +311,18 @@ const DEFAULTS: Record<BuiltinTemplateId, Record<Language, TemplateSpec>> = {
     },
   },
   monster5e: {
+    zh: {
+      title: "怪物（D&D 5e）",
+      html:
+        labelTable(["体型与类型", "阵营", "护甲等级", "生命值", "速度"]) +
+        headerTable(["力量", "敏捷", "体质", "智力", "感知", "魅力"]) +
+        labelTable(["豁免检定", "技能", "抗性", "免疫", "感官", "语言", "挑战等级"]) +
+        section("特性", EMPTY_PARAGRAPH) +
+        section("动作", EMPTY_PARAGRAPH) +
+        section("附赠动作", EMPTY_PARAGRAPH) +
+        section("反应", EMPTY_PARAGRAPH) +
+        section("传奇动作", EMPTY_PARAGRAPH),
+    },
     es: {
       title: "Monstruo (D&D 5e)",
       html:
@@ -309,6 +349,15 @@ const DEFAULTS: Record<BuiltinTemplateId, Record<Language, TemplateSpec>> = {
     },
   },
   dhAdversary: {
+    zh: {
+      title: "敌手（Daggerheart）",
+      html:
+        labelTable(["阶级", "类型", "描述", "动机与战术"]) +
+        headerTable(["难度", "阈值", "生命", "压力"]) +
+        headerTable(["攻击", "武器", "距离", "伤害"]) +
+        labelTable(["专长"]) +
+        section("特性", EMPTY_PARAGRAPH),
+    },
     es: {
       title: "Adversario (Daggerheart)",
       html:
@@ -329,6 +378,12 @@ const DEFAULTS: Record<BuiltinTemplateId, Record<Language, TemplateSpec>> = {
     },
   },
   dhEnvironment: {
+    zh: {
+      title: "环境（Daggerheart）",
+      html:
+        labelTable(["阶级", "类型", "描述", "驱动力", "潜在敌手", "难度"]) +
+        section("特性", EMPTY_PARAGRAPH),
+    },
     es: {
       title: "Entorno (Daggerheart)",
       html:
@@ -343,6 +398,15 @@ const DEFAULTS: Record<BuiltinTemplateId, Record<Language, TemplateSpec>> = {
     },
   },
   sessionRecap: {
+    zh: {
+      title: "团后回顾",
+      html:
+        section("场次", fields(["日期", "参与者"])) +
+        section("发生了什么", EMPTY_PARAGRAPH) +
+        section("关键决定", EMPTY_LIST) +
+        section("战利品与奖励", EMPTY_LIST) +
+        section("未了线索", EMPTY_LIST),
+    },
     es: {
       title: "Resumen de sesión",
       html:
@@ -363,6 +427,64 @@ const DEFAULTS: Record<BuiltinTemplateId, Record<Language, TemplateSpec>> = {
     },
   },
   demo: {
+    zh: {
+      title: "这是一篇笔记",
+      html: demoHtml({
+        h1: "这是一个标题",
+        h2: "这是一个小标题",
+        h3: "这是一个小小标题（我们有点上头）",
+        quote: "这是一段引用",
+        quote2: "这是另一段引用，换了个颜色",
+        divider: "\u2191 分隔线，为你准备的",
+        list: "这是一个列表",
+        sublist: "带一个子列表",
+        onItGoes: "就这样一直下去\u2026",
+        colorStart: "给一行开头上色",
+        colorEnd: " 它的项目符号也会跟着变色",
+        numbered: "这是一个有序列表",
+        letters: "子列表用字母编号",
+        roman: "然后是罗马数字，就是任性",
+        count: "什么都数一数！",
+        formatting: "可以用 <b>加粗</b>、<i>斜体</i>、<u>下划线</u>、<s>删除线</s> 或 {colored} {text}",
+        coloredWord: "彩色",
+        textWord: "文字",
+        pills: "还能 创建 五颜六色 的 色丸",
+        twoLines: "色丸也可以<br>占两行",
+        tablesHeading: "表格！",
+        tableIntro: "这里有一个会自我介绍的：",
+        tableMenu: "其余功能都在表格菜单里：把光标放进单元格，点工具栏上的表格按钮。",
+        togglesHeading: "折叠块",
+        toggle: "这一行是折叠块——点它的箭头折叠下面的内容",
+        toggleBody1: "折叠块下缩进的所有内容，折叠时都会隐藏。",
+        toggleBody2: "适合放不需要一直看到的东西。",
+        backToNormal: "这一行用「减少缩进」（或 Shift+Tab）退出了折叠块，所以始终可见。「增加缩进」（或 Tab）可以把它放回去。",
+        folded: "这个折叠块已经折叠了。来，点开它",
+        foldedBody: "你好！你找到了隐藏文字。这里没别的了，抱歉。",
+        headingFolds: "标题也能折叠（这个已折叠）",
+        headingBody: "一整个章节，收好备用。",
+        item1: "列表",
+        item2: "引用",
+        item3: "甚至表格",
+        item4: "其实什么都行",
+        stepOut: "这一行退出了那个章节，每层一个 Shift+Tab。",
+        deleteMe: "这是一个示例模板。不需要的话，可以在 + 菜单里删除它。",
+      }, {
+        tour: [
+          ["这是一张表格", "它自己也知道"],
+          ["表头列", "第一行和第一列都可以是表头。这张表两者都是"],
+          ["格式", `单元格支持 <b>加粗</b>、<i>斜体</i>、${colored("颜色", "#e05a86")} 和 ${pill("色丸", "#3f8ce0")}`],
+          ["颜色", "可以给一个单元格、一整行或一整列上色"],
+          ["合并", "这个单元格吞掉了下面那个。想拆开随时可以"],
+          ["（真的）", ""],
+          ["移动", "抓住行左侧或列上方的圆点，拖到别处即可"],
+          ["列宽", "拖动列的边界。双击则自动适应文字宽度"],
+        ],
+        wide: [
+          ["这张表很宽", "宽到超出了面板", "所以要横向滚动", "你拉到底了！"],
+          ["看到右边缘了吗", "看起来像被切断", "因为还有内容", "圆角又出现了"],
+        ],
+      }),
+    },
     es: {
       title: "Esto es una nota",
       html: demoHtml({

@@ -3,19 +3,19 @@
 import { escapeHtml } from "./markdown";
 
 export const PILL_COLORS = [
-  { id: "violeta", hex: "#7c5cff" },
-  { id: "azul", hex: "#3f8ce0" },
-  { id: "turquesa", hex: "#22b8b0" },
-  { id: "verde", hex: "#4caf72" },
-  { id: "amarillo", hex: "#d6b214" },
-  { id: "naranja", hex: "#f2780c" },
-  { id: "rojo", hex: "#e04f4f" },
-  { id: "rosa", hex: "#e05a86" },
-  { id: "marrón", hex: "#9c6b3e" },
-  { id: "blanco", hex: "#ffffff" },
-  { id: "gris claro", hex: "#b8b8c0" },
-  { id: "gris", hex: "#8b8994" },
-  { id: "negro", hex: "#2a2a30" },
+  { id: "violet", hex: "#7c5cff" },
+  { id: "blue", hex: "#3f8ce0" },
+  { id: "turquoise", hex: "#22b8b0" },
+  { id: "green", hex: "#4caf72" },
+  { id: "yellow", hex: "#d6b214" },
+  { id: "orange", hex: "#f2780c" },
+  { id: "red", hex: "#e04f4f" },
+  { id: "pink", hex: "#e05a86" },
+  { id: "brown", hex: "#9c6b3e" },
+  { id: "white", hex: "#ffffff" },
+  { id: "light gray", hex: "#b8b8c0" },
+  { id: "gray", hex: "#8b8994" },
+  { id: "black", hex: "#2a2a30" },
 ];
 
 // One button per palette color (data-color="#hex"), plus a "none" one (data-color="") when

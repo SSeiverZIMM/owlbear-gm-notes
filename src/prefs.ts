@@ -18,7 +18,8 @@ export type AccentPref = "auto" | AccentId;
  * each person keeps their own choice, following them across sessions in this room.
  */
 function resolveLanguage(metadata: Metadata): Language {
-  return metadata[LANGUAGE_KEY] === "es" ? "es" : "en";
+  const value = metadata[LANGUAGE_KEY];
+  return value === "es" || value === "zh" ? value : "en";
 }
 
 export async function getLanguage(): Promise<Language> {

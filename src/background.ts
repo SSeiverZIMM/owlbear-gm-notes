@@ -13,6 +13,7 @@ const LANGUAGE_KEY = getPluginId("language");
 const LABELS = {
   en: { link: "Link note", open: "Open note", unnamed: "item" },
   es: { link: "Vincular nota", open: "Abrir nota", unnamed: "objeto" },
+  zh: { link: "链接笔记", open: "打开笔记", unnamed: "物件" },
 };
 
 OBR.onReady(() => {
@@ -34,7 +35,8 @@ OBR.onReady(() => {
   async function sync() {
     const [role, metadata] = await Promise.all([OBR.player.getRole(), OBR.player.getMetadata()]);
     const enabled = role === "GM" && metadata[ITEM_LINKS_PREF_KEY] !== false;
-    const language = metadata[LANGUAGE_KEY] === "es" ? "es" : "en";
+    const raw = metadata[LANGUAGE_KEY];
+    const language = raw === "es" || raw === "zh" ? raw : "en";
     const state = enabled ? language : "off";
     if (state === current) return;
     current = state;
