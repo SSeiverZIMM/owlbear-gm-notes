@@ -19,7 +19,7 @@ export type AccentPref = "auto" | AccentId;
  */
 function resolveLanguage(metadata: Metadata): Language {
   const value = metadata[LANGUAGE_KEY];
-  return value === "es" || value === "zh" ? value : "en";
+  return value === "es" || value === "en" ? value : "zh";
 }
 
 export async function getLanguage(): Promise<Language> {

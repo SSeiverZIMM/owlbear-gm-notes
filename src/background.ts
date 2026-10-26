@@ -36,7 +36,7 @@ OBR.onReady(() => {
     const [role, metadata] = await Promise.all([OBR.player.getRole(), OBR.player.getMetadata()]);
     const enabled = role === "GM" && metadata[ITEM_LINKS_PREF_KEY] !== false;
     const raw = metadata[LANGUAGE_KEY];
-    const language = raw === "es" || raw === "zh" ? raw : "en";
+    const language = raw === "es" ? "es" : "zh";
     const state = enabled ? language : "off";
     if (state === current) return;
     current = state;

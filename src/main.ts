@@ -72,7 +72,7 @@ let templates: Template[] = [];
 let templatesLoaded = false;
 let activeId: string | null = null;
 let searchTerm = "";
-let language: Language = "en";
+let language: Language = "zh";
 let accentPref: AccentPref = "auto";
 // Settings → Hidden parts: whether the eye next to a hidden part ignores clicks.
 let secretEyeLocked = false;
@@ -4641,7 +4641,8 @@ document.getElementById("clearAllBtn")!.addEventListener("click", () => void cle
 document.getElementById("cloudSignInBtn")!.addEventListener("click", () => {
   void signInWithGoogle().catch((err) => {
     console.error("Notes: Google sign-in failed", err);
-    window.alert(strings().cloudSignInError);
+    const code = (err as { code?: string })?.code ?? (err as Error)?.message ?? "";
+    window.alert(code ? `${strings().cloudSignInError}（${code}）` : strings().cloudSignInError);
   });
 });
 // Signed out, public notes can't be updated or taken down: with any shared, signing out asks first
